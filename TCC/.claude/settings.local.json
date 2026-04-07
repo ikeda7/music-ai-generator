@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pip install:*)",
+      "Bash(python -c \"import torch; print\\(''CUDA:'', torch.cuda.is_available\\(\\)\\); print\\(''GPU:'', torch.cuda.get_device_name\\(0\\) if torch.cuda.is_available\\(\\) else ''N/A''\\)\")",
+      "Bash(pip show:*)",
+      "Bash(where python:*)"
+    ]
+  }
+}

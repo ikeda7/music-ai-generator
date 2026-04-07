@@ -1,0 +1,20 @@
+Orientador: Danillo Pereira
+
+Fazer pesquisa no Research Gate, achar algum tema parecido e adequar.
+https://www.researchgate.net/publication/335582222_GERACAO_DE_MUSICA_COM_APRENDIZADO_DE_MAQUINA
+https://www.researchgate.net/publication/335582192_METODOS_COMPUTACIONAIS_APLICADOS_EM_RECONHECIMENTO_SONORO_E_BIOMETRIA_POR_VOZ
+FALAR COM O DANILLO
+
+Anteprojeto: 30 de Agosto (4-5 páginas, modelo de Metodologia Científica)
+Pesquisa de artigos: Google Academic
+
+Revisão Bibliográfica Parcial: 25 de outubro (+ ou - 20 páginas)
+
+--------------------------------------------------------------------------------------------
+
+Revisão Bibliográfica:
+-melhorar fluidez
+-adicionar no mínimo 5 artigos de 2024
+-ter no total, no mínimo 20 artigos referenciados
+-explicar o funcionamento da RNN e da LSTM
+-imagens para ilustrar

@@ -1,0 +1,14 @@
+# Datasets e modelos (muito grandes para o git)
+TCC/datasets/
+TCC/checkpoints/
+TCC/samples/
+TCC/__pycache__/
+TCC/*.pkl
+TCC/*.pyc
+TCC/debug_pipeline.py
+
+# Arquivos temporários
+*.tmp
+*.log
+Thumbs.db
+.DS_Store

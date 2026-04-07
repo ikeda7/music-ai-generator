@@ -1,0 +1,33 @@
+Identificação:
+- Cumprimentar a banca
+- Citar o nome do projeto
+- Citar meu nome e do orientador 
+- Citar a área de pesquisa
+- Citar as palavras-chave
+- Citar a duração
+
+
+Formulação do problema:
+- Contextualizar sobre IA, dando ênfase nas IA's generativas
+- Contextualizar sobre o assunto na área da Música
+- Desafio: Desenvolver um modelo de IA para gerar novas composições a partir de um conjunto de músicas como referência
+- As músicas geradas devem originais e agradáveis, sem que haja plágio
+- O projeto visa garantir a autenticidade das músicas e sua qualidade, respeitando cada estilo musical
+
+
+Objetivos do projeto:
+Principal) 
+- Desenvolver um modelo de IA utilizando Deep Learning para criar novas composições musicais a partir de um conjunto de músicas como referencia
+- Músicas que devem possui suas características de estilos própria, sendo inovadoras e coerentes
+
+Secundários) 
+- Estudar e implementar técnicas avançadas de machine learning
+- Desenvolver e avaliar o modelo de IA generativa
+- Conduzir Avaliações Qualitativas com Voluntários
+- Ajustar o Modelo com Base nos Resultados dos Testes
+
+
+Metodologia e plano de trabalho:
+- Inicialmente, coleta de um conjunto diversificado de dados musicais em formato MIDI (protocolo de comunicação que permite a interação de instrumentos num ambiente digital), esses dados servirão de base para o treinamento da IA.
+- Após a coleta, os dados devem ser convertidos para um formato adequado ao uso de redes neurais. Esse pré-processamento é feito pelo NoteSequences, uma biblioteca em Python que fornece ferramentas para manipulação, criação e análise de dados musicais. Essa biblioteca foi criada pela Magenta, que é um projeto da Google para explorar o uso de aprendizado de máquina na criação de arte e música. A biblioteca também auxilia na remoção de ruídos e inconsistências.
+- O modelo da IA será desenvolvido utilizando Deep Learning. Especificamente RNN's com LSTM(tipo de rede neural projetada para lidar com dados sequenciais ou temporais, como música, possui conexões que permitem que a saída de um neurônio seja usada como entrada para o mesmo neurônio em um próximo passo de tempo. Isso cria uma "memória" do que foi processado anteriormente, permitindo que a rede capture dependências entre elementos em uma sequência) e LSTM

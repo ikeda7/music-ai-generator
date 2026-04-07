@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//mnt/h/Meu Drive/**)",
+      "Bash(find /h -maxdepth 3 -type d -name TCC)",
+      "Bash(wc -l \"/h/Meu Drive/TCC/TCC\"/*.py)",
+      "mcp__plugin_context-mode_context-mode__ctx_doctor",
+      "Bash(dir \"h:\\\\Meu Drive\\\\TCC\\\\\" /b)"
+    ]
+  }
+}

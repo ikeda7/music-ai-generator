@@ -1,0 +1,48 @@
+{
+    "model": {
+        "d_model": 256,
+        "nhead": 4,
+        "num_layers": 4,
+        "dim_feedforward": 1024,
+        "dropout": 0.1,
+        "max_seq_length": 2048
+    },
+    "data": {
+        "seq_length": 512,
+        "num_instruments": 5,
+        "quantization_resolution": 16,
+        "min_velocity": 1,
+        "max_velocity": 127,
+        "min_pitch": 21,
+        "max_pitch": 108
+    },
+    "training": {
+        "batch_size": 16,
+        "learning_rate": 0.0001,
+        "num_epochs": 200,
+        "gradient_clip": 1.0,
+        "warmup_steps": 2000,
+        "save_every": 10,
+        "eval_every": 5,
+        "early_stop_patience": 20,
+        "checkpoint_dir": "checkpoints"
+    },
+    "generation": {
+        "temperature": 0.9,
+        "max_length": 2048,
+        "top_k": 50,
+        "top_p": 0.95,
+        "num_beams": 1
+    },
+    "vocab": {
+        "special_tokens": {
+            "PAD": 0,
+            "BOS": 1,
+            "EOS": 2,
+            "MASK": 3
+        },
+        "num_time_shifts": 128,
+        "num_velocities": 32,
+        "num_pitches": 88
+    }
+}
