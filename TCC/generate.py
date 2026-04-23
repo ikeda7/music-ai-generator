@@ -7,7 +7,6 @@ import os
 import json
 import torch
 import argparse
-import numpy as np
 
 from data_processor import MIDITokenizer
 from model import MultiInstrumentTransformer
@@ -170,64 +169,194 @@ def load_model(checkpoint_path: str, config: dict, device: torch.device):
 
 
 def build_vocab_constraint(tokenizer: MIDITokenizer, device: torch.device,
-                           notes_per_instrument: int = 16):
+                           key_str: str = None):
     """
-    Retorna função de restrição de vocabulário com duas regras:
-    1. VELOCITY só é permitido imediatamente após NOTE_ON.
-    2. A cada `notes_per_instrument` notas geradas, força troca de instrumento
-       no próximo ponto de quebra (TIME_SHIFT ou NOTE_OFF), ciclando pelos 5 slots.
+    Restrições aplicadas aos logits durante a geração — modo PIANO SOLO com 3 vozes.
+
+    Estratégia: todo output vai pro INSTRUMENT_0 (Piano GM). A separação em vozes
+    (solo/base/baixo) emerge via registros de pitch, não via tokens de instrumento.
+    Isso alinha com MAESTRO (74h de piano solo com mão direita + mão esquerda).
+
+    Registros:
+      - Baixo:    MIDI 21–47  (A0–B2)    — mão esquerda, notas-raiz e oitavas
+      - Base:     MIDI 48–65  (C3–F4)    — acordes/acompanhamento
+      - Solo:     MIDI 66–108 (F#4–C8)   — melodia
+
+    Constraints ativas:
+      1. VELOCITY só após NOTE_ON                    (gramatical)
+      2. Força INSTRUMENT_0; bloqueia INSTRUMENT_1..4 (piano único)
+      3. Voice leading                               (musical, soft)
+      4. Repetition penalty (-1.0)                   (comportamental)
+      5. Bloqueio de EOS nos primeiros 300 tokens    (técnico)
+      6. Chord backbone I-V-vi-IV no registro Base   (musical, opt-in via --key)
+      7. Re-entry bias por REGISTRO silente          (polifônico, bônus positivo)
     """
-    velocity_ids  = frozenset(v for k, v in tokenizer.vocab.items() if k.startswith('VELOCITY_'))
-    note_on_ids   = frozenset(v for k, v in tokenizer.vocab.items() if k.startswith('NOTE_ON_'))
+    from collections import deque
+
+    velocity_ids   = frozenset(v for k, v in tokenizer.vocab.items() if k.startswith('VELOCITY_'))
+    note_on_ids    = frozenset(v for k, v in tokenizer.vocab.items() if k.startswith('NOTE_ON_'))
     time_shift_ids = frozenset(v for k, v in tokenizer.vocab.items() if k.startswith('TIME_SHIFT_'))
-    note_off_ids  = frozenset(v for k, v in tokenizer.vocab.items() if k.startswith('NOTE_OFF_'))
+    eos_id         = tokenizer.vocab.get('EOS', 2)
+    bar_id         = tokenizer.vocab.get('BAR')
 
-    # Instrumentos disponíveis em ordem (Piano, Melodia, Baixo, Bateria, Harmonia)
-    instr_ids = [tokenizer.vocab[f'INSTRUMENT_{i}']
-                 for i in range(5) if f'INSTRUMENT_{i}' in tokenizer.vocab]
+    vocab_size = tokenizer.vocab_size
+    zero = torch.zeros(vocab_size, device=device)
 
-    # Pré-computa máscaras
-    velocity_block = torch.zeros(tokenizer.vocab_size, device=device)
+    # #1 Bloqueio de VELOCITY (liberado apenas logo após NOTE_ON)
+    velocity_block = torch.zeros(vocab_size, device=device)
     for tid in velocity_ids:
         velocity_block[tid] = float('-inf')
 
-    zero = torch.zeros(tokenizer.vocab_size, device=device)
+    # #2 Força INSTRUMENT_0 (Piano): bloqueia todos os outros tokens INSTRUMENT_*.
+    # O canal 0 é GM Piano e suporta polifonia nativa — as 3 vozes (solo/base/baixo)
+    # saem naturalmente dos registros de pitch aprendidos do MAESTRO.
+    instr_block = torch.zeros(vocab_size, device=device)
+    for i in range(5):
+        key = f'INSTRUMENT_{i}'
+        if key in tokenizer.vocab and i != 0:
+            instr_block[tokenizer.vocab[key]] = float('-inf')
 
-    # Máscara por instrumento: força um instrumento específico
-    instr_masks = []
-    for iid in instr_ids:
-        m = torch.full((tokenizer.vocab_size,), float('-inf'), device=device)
-        m[iid] = 0.0
-        instr_masks.append(m)
+    # Mapeamento pitch → registro (0=baixo, 1=base, 2=solo)
+    def _pitch_register(pitch: int) -> int:
+        if pitch <= 47:  return 0   # Baixo
+        if pitch <= 65:  return 1   # Base/Harmonia
+        return 2                    # Solo/Melodia
 
-    # Estado mutável
-    state = {'note_count': 0, 'next_instr': 1, 'force': False}
+    # Tokens NOTE_ON agrupados por registro (pra re-entry bias)
+    register_tokens = {0: [], 1: [], 2: []}
+    note_on_by_pitch = {}
+    for k, v in tokenizer.vocab.items():
+        if k.startswith('NOTE_ON_'):
+            pitch = int(k.split('_')[2])
+            note_on_by_pitch[pitch] = v
+            register_tokens[_pitch_register(pitch)].append(v)
+
+    # Parâmetros do re-entry bias por registro
+    silence_threshold = 60    # ~3.75s a 16 steps/s — registros reagem mais rápido que slots
+    silence_max_bonus = 1.5   # teto; sobe de 1.2 pra chamar vozes ausentes com mais força
+    silence_slope    = 0.03   # rampa linear: satura em ~110 tokens de silêncio
+
+    # Máscaras de re-entry: bônus em todos os NOTE_ON do registro silente
+    register_masks = {}
+    for reg, tids in register_tokens.items():
+        m = torch.zeros(vocab_size, device=device)
+        for tid in tids:
+            m[tid] = 1.0  # unitário; multiplicado pelo bônus calculado em runtime
+        register_masks[reg] = m
+
+    # #5 Bloqueio de EOS nos primeiros tokens
+    eos_block = torch.zeros(vocab_size, device=device)
+    eos_block[eos_id] = float('-inf')
+
+    # #3 Voice leading soft: penaliza saltos melódicos grandes.
+    # Aplicado com threshold dinâmico conforme o registro do último pitch:
+    # solo usa 7 semitons (5ª justa); baixo/base usam 12 semitons (oitava).
+    interval_masks_tight = {}   # solo (passos conjuntos)
+    interval_masks_wide  = {}   # baixo/base (saltos ok, oitava penalizada)
+    for src_pitch in range(21, 109):
+        m_tight = torch.zeros(vocab_size, device=device)
+        m_wide  = torch.zeros(vocab_size, device=device)
+        for dst_pitch, tid in note_on_by_pitch.items():
+            jump = abs(dst_pitch - src_pitch)
+            if jump > 7:
+                m_tight[tid] = -0.6 - (jump - 7) * 0.1
+            if jump > 12:
+                m_wide[tid]  = -0.8 - (jump - 12) * 0.1
+        interval_masks_tight[src_pitch] = m_tight
+        interval_masks_wide[src_pitch]  = m_wide
+
+    # #6 Chord backbone I-V-vi-IV aplicado ao REGISTRO Base (48–65).
+    # Penaliza NOTE_ON do registro Base fora do acorde do compasso atual.
+    chord_masks_base = None
+    if key_str and bar_id is not None:
+        root, _ = _parse_key(key_str)
+        _progression = [
+            {root % 12,      (root+4) % 12, (root+7) % 12},   # I
+            {(root+7) % 12, (root+11) % 12, (root+2) % 12},   # V
+            {(root+9) % 12,  (root+0) % 12, (root+4) % 12},   # vi
+            {(root+5) % 12,  (root+9) % 12, (root+0) % 12},   # IV
+        ]
+        chord_masks_base = []
+        for chord_pcs in _progression:
+            m = torch.zeros(vocab_size, device=device)
+            for pitch, tid in note_on_by_pitch.items():
+                if _pitch_register(pitch) == 1 and (pitch % 12) not in chord_pcs:
+                    m[tid] = -1.0
+            chord_masks_base.append(m)
+
+    # #4 Repetition penalty soft
+    repeat_window  = 16
+    repeat_penalty = 1.0
+    recent_tokens  = deque(maxlen=repeat_window)
+
+    # Estado mutável — rastreia último step em que cada registro teve NOTE_ON
+    min_tokens = 300
+    state = {
+        'last_pitch': None,
+        'last_register': None,
+        'steps': 0,
+        'bar_just_seen': False,
+        'bar_count': 0,
+        'last_note_step': {0: 0, 1: 0, 2: 0},  # por registro
+    }
 
     def constraint_fn(last_token_id: int) -> torch.Tensor:
+        state['steps'] += 1
+        recent_tokens.append(last_token_id)
         token = tokenizer.id_to_token.get(last_token_id, '')
 
-        # Após INSTRUMENT: reseta contador, limpa flag
-        if token.startswith('INSTRUMENT_'):
-            state['note_count'] = 0
-            state['force'] = False
-            return velocity_block  # VELOCITY não faz sentido após INSTRUMENT
+        # Rastreia pitch e registro ativos
+        if token.startswith('NOTE_ON_'):
+            pitch = int(token.split('_')[2])
+            state['last_pitch'] = pitch
+            reg = _pitch_register(pitch)
+            state['last_register'] = reg
+            state['last_note_step'][reg] = state['steps']
+            state['bar_just_seen'] = False
 
-        # Se flag de troca ativa e chegamos num ponto de quebra: força INSTRUMENT
-        if state['force'] and (last_token_id in time_shift_ids or last_token_id in note_off_ids):
-            idx = state['next_instr'] % len(instr_ids)
-            state['next_instr'] += 1
-            state['force'] = False
-            return instr_masks[idx]
+        if last_token_id == bar_id:
+            state['bar_just_seen'] = True
+            state['bar_count'] += 1
 
-        # Após NOTE_ON: permite VELOCITY e incrementa contador
+        # Token INSTRUMENT_0 emitido: libera VELOCITY (caso venha em sequência)
+        if token == 'INSTRUMENT_0':
+            return velocity_block + instr_block
+
+        # #1 VELOCITY liberado imediatamente após NOTE_ON
         if last_token_id in note_on_ids:
-            state['note_count'] += 1
-            if state['note_count'] >= notes_per_instrument and instr_ids:
-                state['force'] = True  # troca no próximo ponto de quebra
-                state['note_count'] = 0
-            return zero  # permite VELOCITY
+            return instr_block  # mantém bloqueio de outros INSTRUMENT
 
-        return velocity_block
+        # Contexto geral: VELOCITY bloqueado + outros INSTRUMENT bloqueados + EOS
+        eos_penalty = eos_block if state['steps'] < min_tokens else zero
+        mask = velocity_block + instr_block + eos_penalty
+
+        # #3 Voice leading: threshold conforme o registro do último pitch
+        if state['last_pitch'] is not None:
+            if state['last_register'] == 2:  # solo — graus conjuntos
+                mask = mask + interval_masks_tight[state['last_pitch']]
+            else:  # baixo ou base — saltos ok
+                mask = mask + interval_masks_wide[state['last_pitch']]
+
+        # #4 Repetition penalty soft em NOTE_ON e TIME_SHIFT recentes
+        for tid in recent_tokens:
+            if tid in note_on_ids or tid in time_shift_ids:
+                mask[tid] -= repeat_penalty
+
+        # #6 Chord backbone no registro Base (opt-in via --key)
+        if chord_masks_base is not None:
+            chord_idx = max(0, state['bar_count'] - 1) % 4
+            mask = mask + chord_masks_base[chord_idx]
+
+        # #7 Re-entry bias por REGISTRO silente
+        for reg in (0, 1, 2):
+            if reg == state['last_register']:
+                continue
+            silence = state['steps'] - state['last_note_step'][reg]
+            if silence > silence_threshold:
+                bonus = min(silence_max_bonus, (silence - silence_threshold) * silence_slope)
+                mask = mask + register_masks[reg] * bonus
+
+        return mask
 
     return constraint_fn
 
@@ -239,7 +368,11 @@ def generate_music(model: MultiInstrumentTransformer, tokenizer: MIDITokenizer,
                    temperature: float = None,
                    top_k: int = None,
                    top_p: float = None,
-                   note_mask: torch.Tensor = None) -> list:
+                   note_mask: torch.Tensor = None,
+                   key_str: str = None,
+                   temp_start: float = None,
+                   temp_end: float = None,
+                   temp_warmup: int = 150) -> list:
     """
     Gera uma sequência musical.
 
@@ -278,7 +411,17 @@ def generate_music(model: MultiInstrumentTransformer, tokenizer: MIDITokenizer,
     print(f"Gerando música (max_length={max_length}, temperature={temperature})...")
 
     # Restrição: VELOCITY só pode aparecer após NOTE_ON (evita loop de velocity)
-    vocab_constraint_fn = build_vocab_constraint(tokenizer, device)
+    vocab_constraint_fn = build_vocab_constraint(tokenizer, device, key_str=key_str)
+
+    # Temperatura dinâmica: começa baixa (estabelece tema) e sobe até temp_end (variação)
+    # Se temp_start/temp_end não fornecidos, usa temperatura fixa do parâmetro temperature
+    temperature_fn = None
+    if temp_start is not None and temp_end is not None:
+        _ts, _te, _tw = temp_start, temp_end, temp_warmup
+        def temperature_fn(step: int) -> float:
+            if step >= _tw:
+                return _te
+            return _ts + (_te - _ts) * (step / _tw)
 
     # Gera sequência
     context_size = config['data']['seq_length']
@@ -293,6 +436,7 @@ def generate_music(model: MultiInstrumentTransformer, tokenizer: MIDITokenizer,
             context_size=context_size,
             note_mask=note_mask,
             vocab_constraint_fn=vocab_constraint_fn,
+            temperature_fn=temperature_fn,
         )
     
     # Converte para lista
@@ -334,6 +478,20 @@ def main():
                             'Garante coerência harmônica restringindo notas à escala.')
     parser.add_argument('--auto_key', action='store_true',
                        help='Detecta automaticamente a tonalidade antes de gerar.')
+    parser.add_argument('--temp_start', type=float, default=None,
+                       help='Temperatura inicial (baixa) para estabelecer tema. '
+                            'Se fornecido junto com --temp_end, ativa temperatura dinâmica.')
+    parser.add_argument('--temp_end', type=float, default=None,
+                       help='Temperatura final (alta) para variação criativa.')
+    parser.add_argument('--temp_warmup', type=int, default=150,
+                       help='Número de tokens para rampa de temperatura (padrão: 150)')
+    parser.add_argument('--tempo', type=int, default=100,
+                       help='BPM de renderização do MIDI (padrão: 100). '
+                            'Valores menores = peça mais relaxada.')
+    parser.add_argument('--render_as_band', action='store_true',
+                       help='Remapeia as 3 vozes do piano (baixo/base/solo) pra '
+                            'timbres GM distintos (Bass + Nylon Guitar + Lead Guitar). '
+                            'Requer modelo em modo piano solo (INSTRUMENT_0 forçado).')
 
     args = parser.parse_args()
     
@@ -394,6 +552,10 @@ def main():
             top_k=args.top_k,
             top_p=args.top_p,
             note_mask=note_mask,
+            key_str=key_label,
+            temp_start=args.temp_start,
+            temp_end=args.temp_end,
+            temp_warmup=args.temp_warmup,
         )
         
         # Salva MIDI
@@ -408,7 +570,8 @@ def main():
             tokens=generated_tokens,
             tokenizer=tokenizer,
             output_path=output_path,
-            tempo=120
+            tempo=args.tempo,
+            render_as_band=args.render_as_band,
         )
         
         if success:

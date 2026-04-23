@@ -14,7 +14,8 @@
         "min_velocity": 1,
         "max_velocity": 127,
         "min_pitch": 21,
-        "max_pitch": 108
+        "max_pitch": 108,
+        "augment_semitones": [0, 4, 8]
     },
     "training": {
         "batch_size": 16,

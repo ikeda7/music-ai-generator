@@ -14,7 +14,7 @@ import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
 
-from data_processor import MIDIProcessor, MIDITokenizer, prepare_sequences
+from data_processor import MIDIProcessor, MIDITokenizer, MusicalEvent, prepare_sequences
 from model import MultiInstrumentTransformer
 
 
@@ -40,12 +40,37 @@ def load_config(config_path: str = 'config.json') -> dict:
 def _cache_path(data_paths: list, config: dict) -> str:
     """Gera nome único de cache baseado nos datasets e configurações de dados."""
     paths_sorted = ','.join(sorted(os.path.abspath(p) for p in data_paths))
+    aug = ','.join(str(s) for s in config['data'].get('augment_semitones', [0]))
     key = (
         f"{paths_sorted}"
         f"|seq={config['data']['seq_length']}"
         f"|res={config['data']['quantization_resolution']}"
+        f"|aug={aug}"
     )
     return f".cache_tokens_{hashlib.md5(key.encode()).hexdigest()[:8]}.pkl"
+
+
+def _transpose_events(events: list, semitones: int, min_pitch: int, max_pitch: int) -> list:
+    """
+    Transpõe todos os NOTE_ON/NOTE_OFF por N semitons, exceto bateria (instrumento 3).
+    Notas que saem do intervalo [min_pitch, max_pitch] são descartadas.
+    """
+    if semitones == 0:
+        return events
+    result = []
+    for e in events:
+        if e.event_type in ('NOTE_ON', 'NOTE_OFF') and e.instrument != 3:
+            new_pitch = e.pitch + semitones
+            if min_pitch <= new_pitch <= max_pitch:
+                result.append(MusicalEvent(
+                    event_type=e.event_type, time=e.time,
+                    pitch=new_pitch, velocity=e.velocity,
+                    instrument=e.instrument
+                ))
+            # nota fora do intervalo é descartada silenciosamente
+        else:
+            result.append(e)
+    return result
 
 
 def load_or_tokenize(data_paths: list, config: dict, rebuild: bool = False) -> dict:
@@ -76,14 +101,22 @@ def load_or_tokenize(data_paths: list, config: dict, rebuild: bool = False) -> d
     if not all_events:
         raise RuntimeError(f"Nenhum arquivo MIDI encontrado em: {data_paths}")
 
-    print(f"Tokenizando {len(all_events)} arquivos no total...")
+    semitones_list = config['data'].get('augment_semitones', [0])
+    min_p = config['data']['min_pitch']
+    max_p = config['data']['max_pitch']
+
+    print(f"Tokenizando {len(all_events)} arquivos "
+          f"× {len(semitones_list)} transposições = "
+          f"{len(all_events) * len(semitones_list)} sequências brutas...")
     sequences = []
     for events in tqdm(all_events, desc="Tokenizando"):
-        tokens = tok.encode_events(events)
-        if len(tokens) > 64:
-            sequences.append(tokens)
+        for semitones in semitones_list:
+            transposed = _transpose_events(events, semitones, min_p, max_p)
+            tokens = tok.encode_events(transposed)
+            if len(tokens) > 64:
+                sequences.append(tokens)
 
-    print(f"{len(sequences)}/{len(all_events)} arquivos válidos (> 64 tokens)")
+    print(f"{len(sequences)}/{len(all_events) * len(semitones_list)} sequências válidas (> 64 tokens)")
 
     result = {'sequences': sequences, 'vocab_size': tok.vocab_size, 'vocab': tok.vocab}
     with open(path, 'wb') as f:
@@ -124,31 +157,55 @@ def build_loaders(sequences: list, vocab_size: int, config: dict):
     return train_loader, val_loader
 
 
-def train_epoch(model, loader, optimizer, criterion, device, scheduler, grad_clip):
-    """Treina uma época. O scheduler é atualizado a cada batch (warmup correto)."""
+def train_epoch(model, loader, optimizer, criterion, device, scheduler, grad_clip, scaler):
+    """
+    Treina uma época com Automatic Mixed Precision.
+    Scheduler é atualizado a cada batch (warmup linear correto).
+    Scaler aplica loss scaling em fp16; pula o step se detectar inf/NaN.
+    """
     model.train()
     total_loss = 0.0
+    use_amp = scaler.is_enabled()
+
     for inp, tgt in tqdm(loader, desc="Treinando", leave=False):
         inp, tgt = inp.to(device), tgt.to(device)
         optimizer.zero_grad()
-        logits = model(inp)
-        loss = criterion(logits.reshape(-1, logits.size(-1)), tgt.reshape(-1))
-        loss.backward()
+
+        # Forward + loss em autocast: ops compatíveis rodam em fp16,
+        # ops instáveis (softmax, layernorm) permanecem em fp32.
+        with torch.cuda.amp.autocast(enabled=use_amp):
+            logits = model(inp)
+            loss = criterion(logits.reshape(-1, logits.size(-1)), tgt.reshape(-1))
+
+        # Backward com loss escalonado (evita underflow de gradiente em fp16)
+        scaler.scale(loss).backward()
+
+        # Descala antes do clip — max_norm opera no gradiente real em fp32
+        scaler.unscale_(optimizer)
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=grad_clip)
-        optimizer.step()
-        scheduler.step()  # por batch — linear warmup funciona corretamente assim
+
+        # Scaler detecta inf/NaN e pula o optimizer.step se necessário
+        scaler.step(optimizer)
+        scaler.update()
+        scheduler.step()
+
         total_loss += loss.item()
+
     return total_loss / len(loader)
 
 
 def eval_epoch(model, loader, criterion, device):
+    """Validação com autocast (sem scaler — não há backward)."""
     model.eval()
     total_loss = 0.0
+    use_amp = (device.type == 'cuda')
+
     with torch.no_grad():
         for inp, tgt in tqdm(loader, desc="Validando", leave=False):
             inp, tgt = inp.to(device), tgt.to(device)
-            logits = model(inp)
-            loss = criterion(logits.reshape(-1, logits.size(-1)), tgt.reshape(-1))
+            with torch.cuda.amp.autocast(enabled=use_amp):
+                logits = model(inp)
+                loss = criterion(logits.reshape(-1, logits.size(-1)), tgt.reshape(-1))
             total_loss += loss.item()
     return total_loss / len(loader)
 
@@ -212,7 +269,7 @@ def diagnostico_rapido(model, tokenizer, config, device, epoch, save_midi=False)
     return unique
 
 
-def save_checkpoint(model, optimizer, scheduler, epoch, loss, config, vocab, vocab_size):
+def save_checkpoint(model, optimizer, scheduler, scaler, epoch, loss, config, vocab, vocab_size):
     os.makedirs(config['training']['checkpoint_dir'], exist_ok=True)
     path = os.path.join(config['training']['checkpoint_dir'], f"checkpoint_epoch_{epoch}.pt")
     torch.save({
@@ -220,6 +277,7 @@ def save_checkpoint(model, optimizer, scheduler, epoch, loss, config, vocab, voc
         'model_state_dict': model.state_dict(),
         'optimizer_state_dict': optimizer.state_dict(),
         'scheduler_state_dict': scheduler.state_dict(),
+        'scaler_state_dict': scaler.state_dict(),
         'loss': loss,
         'config': config,
         'vocab_size': vocab_size,
@@ -239,6 +297,8 @@ def main():
     parser.add_argument('--device', type=str, default='auto', choices=['auto', 'cpu', 'cuda'])
     parser.add_argument('--rebuild_cache', action='store_true',
                         help='Ignora cache existente e re-tokeniza tudo do zero')
+    parser.add_argument('--reset_best_loss', action='store_true',
+                        help='Ignora o best_val_loss do checkpoint (útil ao mudar a loss function)')
     args = parser.parse_args()
 
     config = load_config(args.config)
@@ -292,7 +352,12 @@ def main():
         lr=tc['learning_rate'],
         weight_decay=0.01  # regularização leve para melhor generalização
     )
-    criterion = nn.CrossEntropyLoss(ignore_index=config['vocab']['special_tokens']['PAD'])
+    # label_smoothing=0.1 impede que o modelo fique overconfiante em tokens "seguros"
+    # como TIME_SHIFT longo — principal causa do colapso observado na época 99
+    criterion = nn.CrossEntropyLoss(
+        ignore_index=config['vocab']['special_tokens']['PAD'],
+        label_smoothing=0.1
+    )
 
     # Scheduler: linear warmup por N batches → cosine decay até 5% do LR inicial
     warmup = tc['warmup_steps']
@@ -305,6 +370,11 @@ def main():
         return max(0.05, 0.5 * (1.0 + np.cos(np.pi * progress)))
 
     scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+
+    # AMP (Automatic Mixed Precision): forward/backward em fp16 em GPU compatível.
+    # Pesos permanecem fp32; reduz VRAM ~40% e acelera 30-50%. No-op em CPU.
+    use_amp = (device.type == 'cuda')
+    scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
 
     # --- Resume ---
     start_epoch = 0
@@ -319,11 +389,14 @@ def main():
             optimizer.load_state_dict(ckpt['optimizer_state_dict'])
             if 'scheduler_state_dict' in ckpt:
                 scheduler.load_state_dict(ckpt['scheduler_state_dict'])
+            # Carrega estado do scaler se checkpoint já era AMP; senão começa do zero.
+            if 'scaler_state_dict' in ckpt:
+                scaler.load_state_dict(ckpt['scaler_state_dict'])
         except (ValueError, KeyError) as e:
             print(f"  Aviso: estado do otimizador incompatível ({e}).")
             print(f"  Iniciando otimizador do zero (pesos do modelo mantidos).")
         start_epoch = ckpt['epoch'] + 1
-        best_val_loss = ckpt.get('loss', float('inf'))
+        best_val_loss = float('inf') if args.reset_best_loss else ckpt.get('loss', float('inf'))
         print(f"  Continuando da época {start_epoch}")
 
     # --- Loop de treinamento ---
@@ -338,12 +411,13 @@ def main():
         print(f"=== Época {epoch + 1}/{tc['num_epochs']} ===")
 
         train_loss = train_epoch(
-            model, train_loader, optimizer, criterion, device, scheduler, grad_clip
+            model, train_loader, optimizer, criterion, device, scheduler, grad_clip, scaler
         )
         lr_now = optimizer.param_groups[0]['lr']
         print(f"  Train Loss: {train_loss:.4f}  |  LR: {lr_now:.6f}")
 
         # Validação periódica
+        saved_as_best = False
         if (epoch + 1) % tc['eval_every'] == 0:
             val_loss = eval_epoch(model, val_loader, criterion, device)
             print(f"  Val Loss:   {val_loss:.4f}")
@@ -356,9 +430,10 @@ def main():
                 best_val_loss = val_loss
                 patience_counter = 0
                 save_checkpoint(
-                    model, optimizer, scheduler, epoch, val_loss, config, vocab, vocab_size
+                    model, optimizer, scheduler, scaler, epoch, val_loss, config, vocab, vocab_size
                 )
                 print(f"  Novo melhor modelo! (val_loss={val_loss:.4f})")
+                saved_as_best = True
             else:
                 patience_counter += 1
                 print(f"  Sem melhora: {patience_counter}/{patience}")
@@ -366,10 +441,10 @@ def main():
                     print(f"\nEarly stopping ativado na época {epoch + 1}.")
                     break
 
-        # Checkpoint periódico independente da validação
-        if (epoch + 1) % tc['save_every'] == 0:
+        # Checkpoint periódico — salva apenas se não foi salvo como best nesta época
+        if (epoch + 1) % tc['save_every'] == 0 and not saved_as_best:
             save_checkpoint(
-                model, optimizer, scheduler, epoch, train_loss, config, vocab, vocab_size
+                model, optimizer, scheduler, scaler, epoch, train_loss, config, vocab, vocab_size
             )
 
     print("\nTreinamento concluído!")

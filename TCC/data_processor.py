@@ -289,10 +289,7 @@ class MIDITokenizer:
             vocab[f'NOTE_OFF_{pitch}'] = idx
             idx += 1
         
-        # Tokens de velocity (quantizados)
-        velocity_bins = np.linspace(self.config['data']['min_velocity'], 
-                                   self.config['data']['max_velocity'], 
-                                   self.num_velocities)
+        # Tokens de velocity (quantizados em num_velocities bins uniformes)
         for i in range(self.num_velocities):
             vocab[f'VELOCITY_{i}'] = idx
             idx += 1
@@ -301,7 +298,13 @@ class MIDITokenizer:
         for i in range(1, self.num_time_shifts + 1):
             vocab[f'TIME_SHIFT_{i}'] = idx
             idx += 1
-        
+
+        # Tokens de estrutura rítmica (Bar-Relative Encoding)
+        # BAR = início de compasso; BEAT_2/3/4 = tempos 2, 3, 4 do compasso (4/4)
+        for token in ('BAR', 'BEAT_2', 'BEAT_3', 'BEAT_4'):
+            vocab[token] = idx
+            idx += 1
+
         return vocab
     
     def encode_events(self, events: List[MusicalEvent]) -> List[int]:
@@ -315,15 +318,40 @@ class MIDITokenizer:
             Lista de ids de tokens
         """
         tokens = [self.vocab['BOS']]  # Início da sequência
-        
+
+        # Bar-Relative Encoding: a cada 32 steps (1 compasso em 120 BPM, resolução 16)
+        # insere BAR/BEAT_X para o modelo aprender estrutura métrica.
+        # 1 beat = resolution/2 = 8 steps; 1 compasso (4/4) = 32 steps.
+        _beat_steps = self.config['data']['quantization_resolution'] // 2  # 8 steps por beat
+        _bar_steps  = _beat_steps * 4                    # 32 steps por compasso
+        _beat_tokens = ('BAR', 'BEAT_2', 'BEAT_3', 'BEAT_4')
+        _abs_step = 0
+        _last_boundary = 0
+
+        # Marca início do primeiro compasso
+        if 'BAR' in self.vocab:
+            tokens.append(self.vocab['BAR'])
+
         current_instrument = None
-        
+
         for event in events:
             if event.event_type == 'TIME_SHIFT':
                 # event.time armazena o número de steps (não tempo absoluto)
                 steps = int(event.time)
                 if steps > 0 and steps <= self.num_time_shifts:
                     tokens.append(self.vocab.get(f'TIME_SHIFT_{steps}', self.vocab['PAD']))
+
+                _abs_step += steps
+
+                # Emite BAR/BEAT para cada fronteira de tempo cruzada
+                _next_b = (_last_boundary // _beat_steps + 1) * _beat_steps
+                while _abs_step >= _next_b and 'BAR' in self.vocab:
+                    beat_idx = (_next_b // _beat_steps) % 4  # 0=BAR, 1=BEAT_2, 2=BEAT_3, 3=BEAT_4
+                    tok = _beat_tokens[beat_idx]
+                    if tok in self.vocab:
+                        tokens.append(self.vocab[tok])
+                    _last_boundary = _next_b
+                    _next_b += _beat_steps
             
             elif event.event_type == 'NOTE_ON':
                 # Adiciona token de instrumento se mudou
@@ -380,7 +408,7 @@ class MIDITokenizer:
             token_id = tokens[i]
             token = self.id_to_token.get(token_id, 'UNK')
             
-            if token == 'BOS' or token == 'PAD':
+            if token in ('BOS', 'PAD', 'BAR', 'BEAT_2', 'BEAT_3', 'BEAT_4'):
                 i += 1
                 continue
             elif token == 'EOS':

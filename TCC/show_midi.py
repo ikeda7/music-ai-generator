@@ -56,7 +56,18 @@ def piano_roll_png(midi_path: str, output_path: str):
     ax.set_xlabel('Tempo (s)', fontsize=11)
     ax.set_ylabel('Nota MIDI (pitch)', fontsize=11)
     ax.set_title(f'Piano Roll — {midi_path}', fontsize=13)
-    ax.grid(True, axis='x', alpha=0.3, linestyle='--')
+
+    # Grid de beats (a 120 BPM: 1 beat = 0.5s)
+    beat_duration = 0.5
+    bar_duration = beat_duration * 4  # 4/4
+    beat = 0.0
+    while beat <= total_duration:
+        is_bar = abs(beat % bar_duration) < 0.01
+        ax.axvline(x=beat, color='red' if is_bar else 'orange',
+                   linewidth=0.8 if is_bar else 0.3,
+                   alpha=0.6 if is_bar else 0.35,
+                   linestyle='-' if is_bar else '--')
+        beat += beat_duration
 
     # Marca oitavas (C de cada oitava = pitches 24, 36, 48, 60, 72, 84, 96, 108)
     for c_pitch in range(24, 109, 12):

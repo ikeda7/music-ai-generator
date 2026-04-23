@@ -54,7 +54,8 @@ class PositionalEncoding(nn.Module):
 
 class MultiInstrumentTransformer(nn.Module):
     """
-    Modelo Transformer para geração de música multi-instrumental.
+    Decoder-only Transformer para geração autoregressiva de música multi-instrumental.
+    Usa nn.TransformerEncoder do PyTorch com causal mask — equivalente a um GPT-style decoder.
     """
     
     def __init__(self, vocab_size: int, d_model: int = 512, nhead: int = 8,
@@ -85,7 +86,7 @@ class MultiInstrumentTransformer(nn.Module):
         # Encoding posicional
         self.pos_encoder = PositionalEncoding(d_model, max_seq_length, dropout)
         
-        # Transformer Encoder
+        # Transformer (decoder-only via causal mask — PyTorch não tem TransformerDecoder standalone)
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=d_model,
             nhead=nhead,
@@ -184,20 +185,23 @@ class MultiInstrumentTransformer(nn.Module):
                  temperature: float = 1.0, top_k: int = 50, top_p: float = 0.95,
                  eos_token_id: int = 2, context_size: int = 512,
                  note_mask: torch.Tensor = None,
-                 vocab_constraint_fn=None) -> torch.Tensor:
+                 vocab_constraint_fn=None,
+                 temperature_fn=None) -> torch.Tensor:
         """
         Gera uma sequência de tokens autoregressivamente.
 
         Args:
             input_ids: Tokens iniciais de shape (batch_size, seq_len)
             max_length: Comprimento máximo da geração
-            temperature: Temperatura para sampling
+            temperature: Temperatura fixa para sampling (ignorada se temperature_fn for fornecida)
             top_k: Top-k sampling
             top_p: Nucleus sampling
             eos_token_id: ID do token de fim de sequência
             context_size: Tamanho máximo da janela de contexto (deve ser igual ao seq_length do treino)
             vocab_constraint_fn: Função opcional (last_token_id: int) -> Tensor de máscara de logits.
                                  Usada para restringir vocabulário com base no token anterior.
+            temperature_fn: Função opcional (step: int) -> float para temperatura dinâmica.
+                            Se fornecida, sobrescreve o parâmetro temperature.
 
         Retorna:
             Sequência gerada de shape (batch_size, generated_length)
@@ -209,14 +213,17 @@ class MultiInstrumentTransformer(nn.Module):
         generated = input_ids.clone()
 
         with torch.no_grad():
-            for _ in range(max_length - input_ids.size(1)):
+            for step in range(max_length - input_ids.size(1)):
                 # Trunca contexto para a janela de treino — evita degradação fora da distribuição
                 context = generated[:, -context_size:]
                 # Forward pass
                 logits = self.forward(context)  # (batch_size, context_len, vocab_size)
-                
+
+                # Temperatura dinâmica: permite rampa crescente durante a geração
+                temp = temperature_fn(step) if temperature_fn is not None else temperature
+
                 # Pega logits do último token
-                next_token_logits = logits[:, -1, :] / temperature  # (batch_size, vocab_size)
+                next_token_logits = logits[:, -1, :] / temp  # (batch_size, vocab_size)
 
                 # Aplica máscara de escala musical (notas fora da escala → -inf)
                 if note_mask is not None:

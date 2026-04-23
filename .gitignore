@@ -7,6 +7,19 @@ TCC/*.pkl
 TCC/*.pyc
 TCC/debug_pipeline.py
 
+# Config local do Claude Code (pessoal)
+TCC/.claude/
+.claude/
+
+# Templates e arquivos não originais
+PC1/anteprojeto/ModeloAnteprojeto-PC1.docx
+PC1/anteprojeto/template base.pptx
+TCC/Artigo-MarcoMello_revisadoDaniloEler.pdf
+
+# Áudios gerados (binários grandes)
+PC2/*.mp3
+PC2/*.mp4
+
 # Arquivos temporários
 *.tmp
 *.log
