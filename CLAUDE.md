@@ -57,10 +57,15 @@ python train.py --data_path ./datasets/maestro ./datasets/pop909 ./datasets/groo
 # Se mudar a função de perda entre runs, use --reset_best_loss
 python train.py --data_path ./datasets/maestro ./datasets/pop909 ./datasets/groove --resume checkpoints/checkpoint_epoch_74.pt --reset_best_loss
 
-# Geração modo PIANO SOLO (3 vozes naturais emergem por registro)
+# Geração modo PIANO SOLO (output original do modelo)
 python generate.py --checkpoint checkpoints/checkpoint_epoch_74.pt --output musica.mid --key C --temperature 0.9 --top_k 40 --tempo 100
 
-# Geração modo BANDA (piano solo remapeado pra Bass + Nylon Guitar + Lead Guitar)
+# Geração modo TRIO (recomendado) — 3 tracks de piano (solo/base/baixo)
+# com filtros funcionais: bass quantizado ao BAR, base só em clusters, solo livre
+python generate.py --checkpoint checkpoints/checkpoint_epoch_74.pt --output trio.mid --key C --temperature 0.9 --top_k 40 --tempo 100 --render_as_trio
+
+# Geração modo BANDA (piano remapeado pra Bass GM + Nylon Guitar + Lead Guitar)
+# AVISO: sintetizadores GM de guitarra/baixo são de baixa fidelidade
 python generate.py --checkpoint checkpoints/checkpoint_epoch_74.pt --output banda.mid --key C --temperature 0.9 --top_k 40 --tempo 100 --render_as_band
 
 # Tonalidade automática via Krumhansl-Schmuckler

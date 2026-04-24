@@ -30,9 +30,22 @@ _BAND_REGISTERS = [
     (66, 108, 102, 0, 30, 'Lead'),      # Distortion Guitar (solo)
 ]
 
+# --- Modo "trio": mesma separação funcional, TUDO em piano ---
+# Mantém o timbre de Grand Piano (alta qualidade GM) em vez dos sintetizadores
+# de guitarra/baixo. Três tracks no MIDI (uma por registro) mas todas no
+# mesmo instrumento. O usuário enxerga solo/base/baixo estruturados no DAW.
+_TRIO_REGISTERS = [
+    # (pitch_min, pitch_max, slot_virtual, channel, program, nome)
+    (21,  47, 100, 2, 0, 'Baixo'),     # Grand Piano
+    (48,  65, 101, 1, 0, 'Base'),      # Grand Piano
+    (66, 108, 102, 0, 0, 'Solo'),      # Grand Piano
+]
+
 # Mapas derivados para lookup O(1) a partir do slot virtual
 _BAND_CHANNEL = {slot: ch for _, _, slot, ch, _, _ in _BAND_REGISTERS}
 _BAND_PROGRAM = {slot: prog for _, _, slot, _, prog, _ in _BAND_REGISTERS}
+_TRIO_CHANNEL = {slot: ch for _, _, slot, ch, _, _ in _TRIO_REGISTERS}
+_TRIO_PROGRAM = {slot: prog for _, _, slot, _, prog, _ in _TRIO_REGISTERS}
 
 
 def _band_slot_for_pitch(pitch: int) -> int:
@@ -108,7 +121,8 @@ def _apply_band_filters(instrument_tracks: dict, tempo: int, seed: int = 42) -> 
 def tokens_to_midi(tokens: List[int], tokenizer: MIDITokenizer,
                    output_path: str, tempo: int = 120,
                    max_note_duration: float = 1.5,
-                   render_as_band: bool = False) -> bool:
+                   render_as_band: bool = False,
+                   render_as_trio: bool = False) -> bool:
     """
     Converte uma sequência de tokens em um arquivo MIDI.
 
@@ -119,12 +133,19 @@ def tokens_to_midi(tokens: List[int], tokenizer: MIDITokenizer,
         tempo: Tempo em BPM (batidas por minuto)
         max_note_duration: Duração máxima de uma nota em segundos (cap anti-hanging).
         render_as_band: Se True, ignora o INSTRUMENT do token e roteia cada NOTE_ON
-            pra canal GM diferente conforme o registro de pitch (baixo/base/solo).
+            pra canal GM diferente conforme o registro de pitch (baixo/base/solo),
+            aplicando timbres distintos (Bass + Nylon Guitar + Lead Guitar).
             Bateria não é renderizada neste modo.
+        render_as_trio: Como render_as_band, mas mantém TODAS as vozes em piano
+            (Grand Piano em 3 tracks separados). Recomendado pro TCC — preserva
+            a qualidade de timbre do MAESTRO sem introduzir sintetizadores de
+            baixa fidelidade. Tem precedência sobre render_as_band se ambos True.
 
     Retorna:
         True se bem-sucedido, False caso contrário
     """
+    # Trio tem precedência; remapear por registro funciona igual pros dois modos
+    remap_by_register = render_as_trio or render_as_band
     try:
         events = tokenizer.decode_tokens(tokens)
 
@@ -150,7 +171,7 @@ def tokens_to_midi(tokens: List[int], tokenizer: MIDITokenizer,
             if event.event_type == 'TIME_SHIFT':
                 current_time = event.time
             elif event.event_type == 'NOTE_ON':
-                if render_as_band:
+                if remap_by_register:
                     slot = _band_slot_for_pitch(event.pitch)
                 else:
                     slot = event.instrument
@@ -158,10 +179,10 @@ def tokens_to_midi(tokens: List[int], tokenizer: MIDITokenizer,
                     instrument_tracks[slot] = []
                 instrument_tracks[slot].append((current_time, event))
 
-        # No modo banda, aplica filtros funcionais (bass quantizado / base em clusters).
-        # Isso reduz o congestionamento e atribui papéis musicais claros sem mexer no
-        # modelo — tudo acontece no render.
-        if render_as_band:
+        # Nos modos banda/trio, aplica filtros funcionais (bass quantizado ao BAR,
+        # base só em clusters de 2+ notas, solo livre). Isso reduz o congestionamento
+        # e atribui papéis musicais claros sem mexer no modelo — tudo no render.
+        if remap_by_register:
             instrument_tracks = _apply_band_filters(instrument_tracks, tempo=tempo)
 
         # Fecha notas abertas sem NOTE_OFF correspondente (cap em max_note_duration)
@@ -191,7 +212,10 @@ def tokens_to_midi(tokens: List[int], tokenizer: MIDITokenizer,
             instr_track = mido.MidiTrack()
             mid.tracks.append(instr_track)
 
-            if render_as_band:
+            if render_as_trio:
+                channel = _TRIO_CHANNEL.get(instr_idx, 0)
+                program = _TRIO_PROGRAM.get(instr_idx, 0)
+            elif render_as_band:
                 channel = _BAND_CHANNEL.get(instr_idx, 0)
                 program = _BAND_PROGRAM.get(instr_idx, 0)
             else:

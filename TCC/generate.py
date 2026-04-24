@@ -475,7 +475,13 @@ def main():
     parser.add_argument('--render_as_band', action='store_true',
                        help='Remapeia as 3 vozes do piano (baixo/base/solo) pra '
                             'timbres GM distintos (Bass + Nylon Guitar + Lead Guitar). '
-                            'Requer modelo em modo piano solo (INSTRUMENT_0 forçado).')
+                            'Usa sintetizadores GM que podem soar baixa fidelidade — '
+                            'prefira --render_as_trio pra qualidade de timbre.')
+    parser.add_argument('--render_as_trio', action='store_true',
+                       help='Remapeia as 3 vozes em 3 tracks de piano (Grand Piano '
+                            'em todos). Aplica filtros funcionais (bass quantizado '
+                            'ao BAR, base só em clusters, solo livre). Mantém a '
+                            'qualidade de timbre do MAESTRO. Recomendado pro TCC.')
 
     args = parser.parse_args()
     
@@ -556,6 +562,7 @@ def main():
             output_path=output_path,
             tempo=args.tempo,
             render_as_band=args.render_as_band,
+            render_as_trio=args.render_as_trio,
         )
         
         if success:
