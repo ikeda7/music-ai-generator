@@ -482,6 +482,10 @@ def main():
                             'em todos). Aplica filtros funcionais (bass quantizado '
                             'ao BAR, base só em clusters, solo livre). Mantém a '
                             'qualidade de timbre do MAESTRO. Recomendado pro TCC.')
+    parser.add_argument('--max_note_duration', type=float, default=1.0,
+                       help='Duração máxima de cada nota em segundos (padrão 1.0). '
+                            'Valores menores deixam a peça mais "respirada" e '
+                            'reduzem a sensação de notas comendo umas às outras.')
 
     args = parser.parse_args()
     
@@ -563,6 +567,7 @@ def main():
             tempo=args.tempo,
             render_as_band=args.render_as_band,
             render_as_trio=args.render_as_trio,
+            max_note_duration=args.max_note_duration,
         )
         
         if success:

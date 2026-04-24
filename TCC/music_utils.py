@@ -75,7 +75,7 @@ def _apply_band_filters(instrument_tracks: dict, tempo: int, seed: int = 42) -> 
     beat_duration = 60.0 / tempo       # segundos por beat
     bar_duration = beat_duration * 4   # 4/4 tempo
     bar_tolerance = 0.15               # janela do tempo forte
-    cluster_window = 0.2               # janela pra detectar acorde
+    cluster_window = 0.3               # janela pra detectar acorde (mais permissiva)
     groove_probability = 0.15          # chance de bass tocar fora do tempo
 
     # Bass: quantiza NOTE_ON ao BAR; descarta fora com prob 1 - groove
@@ -114,13 +114,48 @@ def _apply_band_filters(instrument_tracks: dict, tempo: int, seed: int = 42) -> 
                 keep_idx.add(i)
         instrument_tracks[101] = [notes[i] for i in sorted(keep_idx)]
 
-    # Solo: sem modificação
+    # Bass e Solo: monofônicos — cada NOTE_ON fecha a nota anterior do mesmo
+    # registro. Piano real toca melodia e linha de baixo em uma nota por vez;
+    # polifonia no solo/baixo cria sensação de "notas comendo umas às outras".
+    # Base permanece polifônico (acordes precisam de múltiplas notas).
+    for slot in (100, 102):
+        if slot in instrument_tracks:
+            instrument_tracks[slot] = _enforce_monophony(instrument_tracks[slot])
+
     return instrument_tracks
+
+
+def _enforce_monophony(events: list) -> list:
+    """
+    Força monofonia no registro: cada NOTE_ON fecha a nota anterior ainda ativa.
+    Insere NOTE_OFF sintético no timestamp do novo NOTE_ON pra encerrar a anterior.
+    """
+    result = []
+    active_pitch = None
+    active_onset = None
+
+    for item in sorted(events, key=lambda x: x[0]):
+        t, event = item
+        if event.event_type == 'NOTE_ON':
+            if active_pitch is not None and active_pitch != event.pitch:
+                result.append((t, type('E', (), {
+                    'event_type': 'NOTE_OFF', 'pitch': active_pitch,
+                    'velocity': 0, 'instrument': event.instrument,
+                })()))
+            active_pitch = event.pitch
+            active_onset = t
+            result.append(item)
+        elif event.event_type == 'NOTE_OFF':
+            result.append(item)
+            if event.pitch == active_pitch:
+                active_pitch = None
+
+    return result
 
 
 def tokens_to_midi(tokens: List[int], tokenizer: MIDITokenizer,
                    output_path: str, tempo: int = 120,
-                   max_note_duration: float = 1.5,
+                   max_note_duration: float = 1.0,
                    render_as_band: bool = False,
                    render_as_trio: bool = False) -> bool:
     """
