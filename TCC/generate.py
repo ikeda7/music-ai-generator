@@ -171,28 +171,23 @@ def load_model(checkpoint_path: str, config: dict, device: torch.device):
 def build_vocab_constraint(tokenizer: MIDITokenizer, device: torch.device,
                            key_str: str = None):
     """
-    Restrições aplicadas aos logits durante a geração — modo PIANO SOLO com 3 vozes.
+    Restrições aplicadas aos logits durante a geração — versão slot-based
+    (referência: teste_ep74.mid, validado musicalmente pelo usuário).
 
-    Estratégia: todo output vai pro INSTRUMENT_0 (Piano GM). A separação em vozes
-    (solo/base/baixo) emerge via registros de pitch, não via tokens de instrumento.
-    Isso alinha com MAESTRO (74h de piano solo com mão direita + mão esquerda).
+    O modelo foi treinado com INSTRUMENT_0..4 (Piano/Melodia/Baixo/Bateria/Harmonia)
+    e aprendeu papéis funcionais por slot. Constraints respeitam essa estrutura:
 
-    Registros:
-      - Baixo:    MIDI 21–47  (A0–B2)    — mão esquerda, notas-raiz e oitavas
-      - Base:     MIDI 48–65  (C3–F4)    — acordes/acompanhamento
-      - Solo:     MIDI 66–108 (F#4–C8)   — melodia
-
-    Constraints ativas:
       1. VELOCITY só após NOTE_ON                    (gramatical)
-      2. Voice leading por registro                  (musical, soft)
-      3. Repetition penalty (-1.0)                   (comportamental)
+      2. Voice leading: slot 1 (Melodia) tight (>7 semitons); demais wide (>12)
+      3. Repetition penalty soft (-1.0)              (comportamental)
       4. Bloqueio de EOS nos primeiros 300 tokens    (técnico)
-      5. Chord backbone I-V-vi-IV no registro Base   (musical, opt-in via --key)
-      6. Re-entry bias por REGISTRO silente          (polifônico, bônus positivo)
+      5. Bass anchor: slot 2 prioriza tônica/quinta em BAR (opt-in via --key)
+      6. Chord backbone I-V-vi-IV: slot 4 (Harmonia) (opt-in via --key)
+      7. Re-entry bias por SLOT silente              (polifônico, bônus positivo)
 
-    O modelo emite INSTRUMENT_0..4 livremente (sem força). O remapeamento
-    multi-timbre é feito no render (music_utils.render_as_band), que roteia
-    cada NOTE_ON por REGISTRO DE PITCH, não pelo slot do token.
+    O remapeamento multi-timbre (modo banda) é feito no render via music_utils
+    --render_as_band, que roteia cada NOTE_ON por REGISTRO DE PITCH. Isso é
+    independente desta função — o decoder gera normalmente.
     """
     from collections import deque
 
@@ -210,48 +205,18 @@ def build_vocab_constraint(tokenizer: MIDITokenizer, device: torch.device,
     for tid in velocity_ids:
         velocity_block[tid] = float('-inf')
 
-    # NOTA: não forçamos INSTRUMENT_0. O modelo foi treinado emitindo INSTRUMENT_0..4
-    # livremente — forçar piano único causa distributional shift e colapso.
-    # O remapeamento multi-timbre é feito no render (music_utils render_as_band),
-    # que roteia cada NOTE_ON por REGISTRO DE PITCH, ignorando o slot do token.
-
-    # Mapeamento pitch → registro (0=baixo, 1=base, 2=solo)
-    def _pitch_register(pitch: int) -> int:
-        if pitch <= 47:  return 0   # Baixo
-        if pitch <= 65:  return 1   # Base/Harmonia
-        return 2                    # Solo/Melodia
-
-    # Tokens NOTE_ON agrupados por registro (pra re-entry bias)
-    register_tokens = {0: [], 1: [], 2: []}
-    note_on_by_pitch = {}
-    for k, v in tokenizer.vocab.items():
-        if k.startswith('NOTE_ON_'):
-            pitch = int(k.split('_')[2])
-            note_on_by_pitch[pitch] = v
-            register_tokens[_pitch_register(pitch)].append(v)
-
-    # Parâmetros do re-entry bias por registro
-    silence_threshold = 60    # ~3.75s a 16 steps/s — registros reagem mais rápido que slots
-    silence_max_bonus = 1.5   # teto; sobe de 1.2 pra chamar vozes ausentes com mais força
-    silence_slope    = 0.03   # rampa linear: satura em ~110 tokens de silêncio
-
-    # Máscaras de re-entry: bônus em todos os NOTE_ON do registro silente
-    register_masks = {}
-    for reg, tids in register_tokens.items():
-        m = torch.zeros(vocab_size, device=device)
-        for tid in tids:
-            m[tid] = 1.0  # unitário; multiplicado pelo bônus calculado em runtime
-        register_masks[reg] = m
-
-    # #5 Bloqueio de EOS nos primeiros tokens
+    # #4 Bloqueio de EOS nos primeiros tokens
     eos_block = torch.zeros(vocab_size, device=device)
     eos_block[eos_id] = float('-inf')
 
-    # #3 Voice leading soft: penaliza saltos melódicos grandes.
-    # Aplicado com threshold dinâmico conforme o registro do último pitch:
-    # solo usa 7 semitons (5ª justa); baixo/base usam 12 semitons (oitava).
-    interval_masks_tight = {}   # solo (passos conjuntos)
-    interval_masks_wide  = {}   # baixo/base (saltos ok, oitava penalizada)
+    # Voice leading: uma máscara por pitch de origem, duas variantes (tight/wide).
+    # Melodia (slot 1) usa tight (threshold 7 semitons, 5ª justa).
+    # Demais slots usam wide (threshold 12 semitons, oitava).
+    note_on_by_pitch = {int(k.split('_')[2]): v
+                        for k, v in tokenizer.vocab.items() if k.startswith('NOTE_ON_')}
+
+    interval_masks_tight = {}
+    interval_masks_wide  = {}
     for src_pitch in range(21, 109):
         m_tight = torch.zeros(vocab_size, device=device)
         m_wide  = torch.zeros(vocab_size, device=device)
@@ -264,39 +229,55 @@ def build_vocab_constraint(tokenizer: MIDITokenizer, device: torch.device,
         interval_masks_tight[src_pitch] = m_tight
         interval_masks_wide[src_pitch]  = m_wide
 
-    # #6 Chord backbone I-V-vi-IV aplicado ao REGISTRO Base (48–65).
-    # Penaliza NOTE_ON do registro Base fora do acorde do compasso atual.
-    chord_masks_base = None
+    # Bass anchor (#5) e Chord backbone (#6) — ambos opt-in via --key
+    bass_bar_mask = None
+    chord_masks   = None
     if key_str and bar_id is not None:
         root, _ = _parse_key(key_str)
+
+        # Bass: tônica e quinta prioritárias no início de cada BAR (slot 2)
+        tonic_fifth_pcs = {root % 12, (root + 7) % 12}
+        bass_bar_mask = torch.zeros(vocab_size, device=device)
+        for pitch, tid in note_on_by_pitch.items():
+            if pitch % 12 not in tonic_fifth_pcs:
+                bass_bar_mask[tid] = -2.0
+
+        # Progressão I-V-vi-IV rotativa por compasso (slot 4 — Harmonia)
         _progression = [
             {root % 12,      (root+4) % 12, (root+7) % 12},   # I
             {(root+7) % 12, (root+11) % 12, (root+2) % 12},   # V
             {(root+9) % 12,  (root+0) % 12, (root+4) % 12},   # vi
             {(root+5) % 12,  (root+9) % 12, (root+0) % 12},   # IV
         ]
-        chord_masks_base = []
+        chord_masks = []
         for chord_pcs in _progression:
             m = torch.zeros(vocab_size, device=device)
             for pitch, tid in note_on_by_pitch.items():
-                if _pitch_register(pitch) == 1 and (pitch % 12) not in chord_pcs:
-                    m[tid] = -1.0
-            chord_masks_base.append(m)
+                if pitch % 12 not in chord_pcs:
+                    m[tid] = -1.5
+            chord_masks.append(m)
 
-    # #4 Repetition penalty soft
+    # #3 Repetition penalty soft
     repeat_window  = 16
     repeat_penalty = 1.0
     recent_tokens  = deque(maxlen=repeat_window)
 
-    # Estado mutável — rastreia último step em que cada registro teve NOTE_ON
+    # #7 Re-entry bias por SLOT silente
+    instr_ids = {i: tokenizer.vocab[f'INSTRUMENT_{i}']
+                 for i in range(5) if f'INSTRUMENT_{i}' in tokenizer.vocab}
+    silence_threshold = 80    # ~5s a 16 steps/s antes de premiar slot silencioso
+    silence_max_bonus = 1.2   # teto do bônus
+    silence_slope    = 0.02   # rampa linear; satura em ~140 tokens
+
+    # Estado mutável — rastreia slot ativo e última NOTE_ON por slot
     min_tokens = 300
     state = {
         'last_pitch': None,
-        'last_register': None,
         'steps': 0,
+        'current_instr': 0,
         'bar_just_seen': False,
         'bar_count': 0,
-        'last_note_step': {0: 0, 1: 0, 2: 0},  # por registro
+        'last_note_step': {i: 0 for i in instr_ids},
     }
 
     def constraint_fn(last_token_id: int) -> torch.Tensor:
@@ -304,21 +285,19 @@ def build_vocab_constraint(tokenizer: MIDITokenizer, device: torch.device,
         recent_tokens.append(last_token_id)
         token = tokenizer.id_to_token.get(last_token_id, '')
 
-        # Rastreia pitch e registro ativos
+        # Rastreia pitch e atualiza timestamp do slot ativo
         if token.startswith('NOTE_ON_'):
-            pitch = int(token.split('_')[2])
-            state['last_pitch'] = pitch
-            reg = _pitch_register(pitch)
-            state['last_register'] = reg
-            state['last_note_step'][reg] = state['steps']
+            state['last_pitch'] = int(token.split('_')[2])
+            state['last_note_step'][state['current_instr']] = state['steps']
             state['bar_just_seen'] = False
 
         if last_token_id == bar_id:
             state['bar_just_seen'] = True
             state['bar_count'] += 1
 
-        # Token INSTRUMENT_* emitido: bloqueia VELOCITY (vem NOTE_ON/TIME_SHIFT em seguida)
+        # Token INSTRUMENT_X: atualiza slot ativo e bloqueia VELOCITY (NOTE_ON vem a seguir)
         if token.startswith('INSTRUMENT_'):
+            state['current_instr'] = int(token.split('_')[1])
             return velocity_block
 
         # #1 VELOCITY liberado imediatamente após NOTE_ON
@@ -329,31 +308,37 @@ def build_vocab_constraint(tokenizer: MIDITokenizer, device: torch.device,
         eos_penalty = eos_block if state['steps'] < min_tokens else zero
         mask = velocity_block + eos_penalty
 
-        # #3 Voice leading: threshold conforme o registro do último pitch
+        # #2 Voice leading por SLOT: melodia tight, demais wide
         if state['last_pitch'] is not None:
-            if state['last_register'] == 2:  # solo — graus conjuntos
+            if state['current_instr'] == 1:
                 mask = mask + interval_masks_tight[state['last_pitch']]
-            else:  # baixo ou base — saltos ok
+            else:
                 mask = mask + interval_masks_wide[state['last_pitch']]
 
-        # #4 Repetition penalty soft em NOTE_ON e TIME_SHIFT recentes
+        # #3 Repetition penalty em NOTE_ON e TIME_SHIFT recentes
         for tid in recent_tokens:
             if tid in note_on_ids or tid in time_shift_ids:
                 mask[tid] -= repeat_penalty
 
-        # #6 Chord backbone no registro Base (opt-in via --key)
-        if chord_masks_base is not None:
-            chord_idx = max(0, state['bar_count'] - 1) % 4
-            mask = mask + chord_masks_base[chord_idx]
+        # #5 Bass anchor no início de BAR (slot 2)
+        if (bass_bar_mask is not None
+                and state['current_instr'] == 2
+                and state['bar_just_seen']):
+            mask = mask + bass_bar_mask
 
-        # #7 Re-entry bias por REGISTRO silente
-        for reg in (0, 1, 2):
-            if reg == state['last_register']:
+        # #6 Chord backbone I-V-vi-IV (slot 4); (bar_count-1) para 1º compasso = I
+        if chord_masks is not None and state['current_instr'] == 4:
+            chord_idx = max(0, state['bar_count'] - 1) % 4
+            mask = mask + chord_masks[chord_idx]
+
+        # #7 Re-entry bias por SLOT silente
+        for slot, iid in instr_ids.items():
+            if slot == state['current_instr']:
                 continue
-            silence = state['steps'] - state['last_note_step'][reg]
+            silence = state['steps'] - state['last_note_step'][slot]
             if silence > silence_threshold:
                 bonus = min(silence_max_bonus, (silence - silence_threshold) * silence_slope)
-                mask = mask + register_masks[reg] * bonus
+                mask[iid] += bonus
 
         return mask
 
