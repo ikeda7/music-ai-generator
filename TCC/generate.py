@@ -136,7 +136,7 @@ def load_model(checkpoint_path: str, config: dict, device: torch.device):
         Tupla (modelo, tokenizer, configurações do checkpoint)
     """
     print(f"Carregando checkpoint: {checkpoint_path}")
-    checkpoint = torch.load(checkpoint_path, map_location=device)
+    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
     
     # Recria tokenizer com vocabulário salvo
     tokenizer = MIDITokenizer(config)
@@ -184,12 +184,15 @@ def build_vocab_constraint(tokenizer: MIDITokenizer, device: torch.device,
 
     Constraints ativas:
       1. VELOCITY só após NOTE_ON                    (gramatical)
-      2. Força INSTRUMENT_0; bloqueia INSTRUMENT_1..4 (piano único)
-      3. Voice leading                               (musical, soft)
-      4. Repetition penalty (-1.0)                   (comportamental)
-      5. Bloqueio de EOS nos primeiros 300 tokens    (técnico)
-      6. Chord backbone I-V-vi-IV no registro Base   (musical, opt-in via --key)
-      7. Re-entry bias por REGISTRO silente          (polifônico, bônus positivo)
+      2. Voice leading por registro                  (musical, soft)
+      3. Repetition penalty (-1.0)                   (comportamental)
+      4. Bloqueio de EOS nos primeiros 300 tokens    (técnico)
+      5. Chord backbone I-V-vi-IV no registro Base   (musical, opt-in via --key)
+      6. Re-entry bias por REGISTRO silente          (polifônico, bônus positivo)
+
+    O modelo emite INSTRUMENT_0..4 livremente (sem força). O remapeamento
+    multi-timbre é feito no render (music_utils.render_as_band), que roteia
+    cada NOTE_ON por REGISTRO DE PITCH, não pelo slot do token.
     """
     from collections import deque
 
@@ -207,14 +210,10 @@ def build_vocab_constraint(tokenizer: MIDITokenizer, device: torch.device,
     for tid in velocity_ids:
         velocity_block[tid] = float('-inf')
 
-    # #2 Força INSTRUMENT_0 (Piano): bloqueia todos os outros tokens INSTRUMENT_*.
-    # O canal 0 é GM Piano e suporta polifonia nativa — as 3 vozes (solo/base/baixo)
-    # saem naturalmente dos registros de pitch aprendidos do MAESTRO.
-    instr_block = torch.zeros(vocab_size, device=device)
-    for i in range(5):
-        key = f'INSTRUMENT_{i}'
-        if key in tokenizer.vocab and i != 0:
-            instr_block[tokenizer.vocab[key]] = float('-inf')
+    # NOTA: não forçamos INSTRUMENT_0. O modelo foi treinado emitindo INSTRUMENT_0..4
+    # livremente — forçar piano único causa distributional shift e colapso.
+    # O remapeamento multi-timbre é feito no render (music_utils render_as_band),
+    # que roteia cada NOTE_ON por REGISTRO DE PITCH, ignorando o slot do token.
 
     # Mapeamento pitch → registro (0=baixo, 1=base, 2=solo)
     def _pitch_register(pitch: int) -> int:
@@ -318,17 +317,17 @@ def build_vocab_constraint(tokenizer: MIDITokenizer, device: torch.device,
             state['bar_just_seen'] = True
             state['bar_count'] += 1
 
-        # Token INSTRUMENT_0 emitido: libera VELOCITY (caso venha em sequência)
-        if token == 'INSTRUMENT_0':
-            return velocity_block + instr_block
+        # Token INSTRUMENT_* emitido: bloqueia VELOCITY (vem NOTE_ON/TIME_SHIFT em seguida)
+        if token.startswith('INSTRUMENT_'):
+            return velocity_block
 
         # #1 VELOCITY liberado imediatamente após NOTE_ON
         if last_token_id in note_on_ids:
-            return instr_block  # mantém bloqueio de outros INSTRUMENT
+            return zero
 
-        # Contexto geral: VELOCITY bloqueado + outros INSTRUMENT bloqueados + EOS
+        # Contexto geral: VELOCITY bloqueado + EOS (se cedo)
         eos_penalty = eos_block if state['steps'] < min_tokens else zero
-        mask = velocity_block + instr_block + eos_penalty
+        mask = velocity_block + eos_penalty
 
         # #3 Voice leading: threshold conforme o registro do último pitch
         if state['last_pitch'] is not None:

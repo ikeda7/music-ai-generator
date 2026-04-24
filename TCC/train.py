@@ -383,7 +383,7 @@ def main():
 
     if args.resume:
         print(f"Retomando de: {args.resume}")
-        ckpt = torch.load(args.resume, map_location=device)
+        ckpt = torch.load(args.resume, map_location=device, weights_only=False)
         model.load_state_dict(ckpt['model_state_dict'])
         try:
             optimizer.load_state_dict(ckpt['optimizer_state_dict'])

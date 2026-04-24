@@ -9,7 +9,6 @@ import pretty_midi
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-import matplotlib.patches as patches
 
 
 def piano_roll_png(midi_path: str, output_path: str):

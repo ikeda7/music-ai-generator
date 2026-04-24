@@ -2,6 +2,7 @@
 Utilitários musicais para conversão entre tokens e MIDI.
 """
 
+import random
 import mido
 from typing import List
 from data_processor import MIDITokenizer
@@ -41,6 +42,67 @@ def _band_slot_for_pitch(pitch: int) -> int:
             return slot
     # Fallback: pitch extremo fora das faixas definidas → solo
     return 102
+
+
+def _apply_band_filters(instrument_tracks: dict, tempo: int, seed: int = 42) -> dict:
+    """
+    Filtros funcionais aplicados no modo render_as_band para reduzir congestionamento
+    sonoro e atribuir papéis musicais claros a cada registro:
+
+    - Bass (slot 100):   mantém NOTE_ON próximos a BAR boundaries (±0.15s);
+                         notas fora do tempo forte passam com 15% de chance (groove).
+    - Base (slot 101):   mantém apenas NOTE_ON em clusters (≥2 notas em 0.2s).
+                         Notas isoladas do registro médio são descartadas — o acorde
+                         só soa quando tem pelo menos dois pitches simultâneos.
+    - Solo (slot 102):   passa livre, sem filtro.
+
+    Determinístico: usa random.Random(seed) pra reprodutibilidade (regra do projeto).
+    """
+    rng = random.Random(seed)
+    beat_duration = 60.0 / tempo       # segundos por beat
+    bar_duration = beat_duration * 4   # 4/4 tempo
+    bar_tolerance = 0.15               # janela do tempo forte
+    cluster_window = 0.2               # janela pra detectar acorde
+    groove_probability = 0.15          # chance de bass tocar fora do tempo
+
+    # Bass: quantiza NOTE_ON ao BAR; descarta fora com prob 1 - groove
+    if 100 in instrument_tracks:
+        filtered = []
+        for item in instrument_tracks[100]:
+            t, event = item
+            if event.event_type != 'NOTE_ON':
+                filtered.append(item)
+                continue
+            nearest_bar = round(t / bar_duration) * bar_duration
+            if abs(t - nearest_bar) <= bar_tolerance:
+                filtered.append(item)
+            elif rng.random() < groove_probability:
+                filtered.append(item)
+        instrument_tracks[100] = filtered
+
+    # Base: detecta clusters (janela deslizante de 0.2s com ≥2 notas)
+    if 101 in instrument_tracks:
+        notes = [it for it in instrument_tracks[101] if it[1].event_type == 'NOTE_ON']
+        notes.sort(key=lambda x: x[0])
+        n = len(notes)
+        keep_idx = set()
+        for i in range(n):
+            t_i = notes[i][0]
+            count = 1
+            j = i - 1
+            while j >= 0 and t_i - notes[j][0] <= cluster_window:
+                count += 1
+                j -= 1
+            j = i + 1
+            while j < n and notes[j][0] - t_i <= cluster_window:
+                count += 1
+                j += 1
+            if count >= 2:
+                keep_idx.add(i)
+        instrument_tracks[101] = [notes[i] for i in sorted(keep_idx)]
+
+    # Solo: sem modificação
+    return instrument_tracks
 
 
 def tokens_to_midi(tokens: List[int], tokenizer: MIDITokenizer,
@@ -95,6 +157,12 @@ def tokens_to_midi(tokens: List[int], tokenizer: MIDITokenizer,
                 if slot not in instrument_tracks:
                     instrument_tracks[slot] = []
                 instrument_tracks[slot].append((current_time, event))
+
+        # No modo banda, aplica filtros funcionais (bass quantizado / base em clusters).
+        # Isso reduz o congestionamento e atribui papéis musicais claros sem mexer no
+        # modelo — tudo acontece no render.
+        if render_as_band:
+            instrument_tracks = _apply_band_filters(instrument_tracks, tempo=tempo)
 
         # Fecha notas abertas sem NOTE_OFF correspondente (cap em max_note_duration)
         for instr_idx, instr_events in instrument_tracks.items():

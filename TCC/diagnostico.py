@@ -21,10 +21,7 @@ def load_config(path='config.json'):
 
 
 def load_model(checkpoint_path, config, device):
-    import warnings
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        checkpoint = torch.load(checkpoint_path, map_location=device)
+    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
 
     tokenizer = MIDITokenizer(config)
     if 'vocab' in checkpoint:
