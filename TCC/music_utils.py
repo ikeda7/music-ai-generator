@@ -168,9 +168,10 @@ def _inject_solid_foundation(instrument_tracks: dict, tempo: int,
         instrument_tracks[102] = []
     instrument_tracks[102].extend(promoted)
 
-    # Gap mínimo entre NOTE_ONs do solo (~ colcheia a 95 BPM)
+    # Gap mínimo entre NOTE_ONs do solo — 0.15s permite densidade melódica
+    # razoável (~semicolcheia a 100 BPM) sem virar metralhadora de notas.
     instrument_tracks[102] = _enforce_min_gap(
-        instrument_tracks[102], min_gap=0.25
+        instrument_tracks[102], min_gap=0.15
     )
 
     # Progressão por modo. Cada entrada: (bass_root_pc, [chord_pcs])
