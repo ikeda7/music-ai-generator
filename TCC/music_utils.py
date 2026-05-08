@@ -129,11 +129,17 @@ def _inject_solid_foundation(instrument_tracks: dict, tempo: int,
                              key_root: int, total_duration: float) -> dict:
     """
     Substitui o conteúdo dos slots Bass (100) e Base (101) por fundação rítmica
-    sintética baseada na progressão I-V-vi-IV. O slot Solo (102) é preservado.
+    sintética baseada na progressão I-V-vi-IV. O slot Solo (102) é preservado e
+    enriquecido — notas do modelo que estavam no registro Base são promovidas
+    pra Solo (transpostas +12) pra não perder material melódico.
 
     A cada compasso (4/4):
       - Bass toca a tônica do acorde (oitava grave) no tempo 1.
       - Base toca o tríade do acorde (chord stamp) nos tempos 1 e 3.
+
+    Solo: notas originalmente em 48-65 sobem +12 semitons e juntam com solo;
+    depois aplica gap mínimo de 0.25s (~ colcheia a 95 BPM) entre NOTE_ONs
+    pra evitar melodia mais densa que a base — fluxo musical respirando.
 
     Args:
         instrument_tracks: dict com slots virtuais 100/101/102 já populados.
@@ -143,6 +149,26 @@ def _inject_solid_foundation(instrument_tracks: dict, tempo: int,
     """
     beat_duration = 60.0 / tempo
     bar_duration = beat_duration * 4
+
+    # Promove notas do registro Base original pro Solo (+12 semitons).
+    # Faz ANTES de substituir o slot 101 — assim a melodia que o modelo
+    # escreveu no registro médio não é perdida quando o chord stamp entra.
+    promoted = []
+    for item in instrument_tracks.get(101, []):
+        t, event = item
+        if event.event_type == 'NOTE_ON':
+            promoted.append((t, type('E', (), {
+                'event_type': 'NOTE_ON', 'pitch': event.pitch + 12,
+                'velocity': event.velocity, 'instrument': 102,
+            })()))
+    if 102 not in instrument_tracks:
+        instrument_tracks[102] = []
+    instrument_tracks[102].extend(promoted)
+
+    # Suaviza densidade do solo: gap mínimo entre NOTE_ONs sucessivos
+    instrument_tracks[102] = _enforce_min_gap(
+        instrument_tracks[102], min_gap=0.25
+    )
 
     # Progressão I-V-vi-IV: cada entrada é (root_pc, [chord_pcs])
     # PCs estão em 0..11 e mapeamos pra MIDI somando oitavas adequadas
@@ -194,10 +220,31 @@ def _inject_solid_foundation(instrument_tracks: dict, tempo: int,
         t += bar_duration
         bar_count += 1
 
-    # Substitui slots de bass e base; preserva solo (102)
+    # Substitui slots de bass e base (solo já foi enriquecido acima)
     instrument_tracks[100] = bass_events
     instrument_tracks[101] = base_events
     return instrument_tracks
+
+
+def _enforce_min_gap(events: list, min_gap: float = 0.25) -> list:
+    """
+    Garante intervalo mínimo entre NOTE_ONs sucessivos. Notas que chegam
+    em < min_gap do NOTE_ON anterior são descartadas. Suaviza densidade
+    melódica sem alterar o material restante.
+    """
+    sorted_events = sorted(events, key=lambda x: x[0])
+    result = []
+    last_note_on_t = -float('inf')
+    for item in sorted_events:
+        t, event = item
+        if event.event_type == 'NOTE_ON':
+            if t - last_note_on_t < min_gap:
+                continue  # descarta nota muito próxima da anterior
+            last_note_on_t = t
+            result.append(item)
+        else:
+            result.append(item)
+    return result
 
 
 def _enforce_monophony(events: list) -> list:
