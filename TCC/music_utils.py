@@ -118,9 +118,12 @@ def _apply_band_filters(instrument_tracks: dict, tempo: int, seed: int = 42) -> 
     # registro. Piano real toca melodia e linha de baixo em uma nota por vez;
     # polifonia no solo/baixo cria sensação de "notas comendo umas às outras".
     # Base permanece polifônico (acordes precisam de múltiplas notas).
+    # Cap agressivo de 1.2s evita drones sustentados no solo.
     for slot in (100, 102):
         if slot in instrument_tracks:
-            instrument_tracks[slot] = _enforce_monophony(instrument_tracks[slot])
+            instrument_tracks[slot] = _enforce_monophony(
+                instrument_tracks[slot], max_duration=1.2
+            )
 
     return instrument_tracks
 
@@ -207,28 +210,48 @@ def _inject_solid_foundation(instrument_tracks: dict, tempo: int,
         bass_pc, chord_pcs = progression[bar_count % 4]
         is_breath_bar = (bar_count % 4 == 3)  # último bar do ciclo respira
 
-        # Bass: tônica no tempo 1, quinta no tempo 3 (movimento root-fifth)
-        # Velocity decai sutilmente em breath bar pra dar sensação de cadência
-        bass_root_pitch = bass_octave_base + (bass_pc % 12)
-        bass_fifth_pitch = bass_octave_base + ((bass_pc + 7) % 12)
-        bass_vel = vel_medium if is_breath_bar else vel_strong
+        # ---------- WALKING BASS ----------
+        # Pattern: root → 3ª (do acorde) → 5ª → oitava (4 notas, 1 por beat).
+        # 3ª usa o intervalo real do acorde (chord_pcs[1] - bass_pc) — fica
+        # +4 em maior, +3 em menor — preserva a tonalidade.
+        third_interval = (chord_pcs[1] - bass_pc) % 12 or 4
+        # Intervalos do walking + velocidade por beat (cria groove sem groove_prob)
+        walking = [
+            (0,                    vel_strong if not is_breath_bar else vel_medium),
+            (third_interval,       vel_soft),
+            (7,                    vel_medium if not is_breath_bar else vel_soft),
+            (12,                   vel_soft),
+        ]
 
-        bass_events.append((t, type('E', (), {
-            'event_type': 'NOTE_ON', 'pitch': bass_root_pitch,
-            'velocity': bass_vel, 'instrument': 100,
-        })()))
-        # Quinta no tempo 3 (meio do BAR)
-        t_mid = t + bar_duration / 2
-        if t_mid < total_duration:
-            bass_events.append((t_mid, type('E', (), {
-                'event_type': 'NOTE_ON', 'pitch': bass_fifth_pitch,
-                'velocity': vel_soft, 'instrument': 100,
+        for beat_idx, (interval, vel) in enumerate(walking):
+            note_t = t + beat_idx * beat_duration
+            if note_t >= total_duration:
+                break
+            # Mod 12 mantém estritamente em uma oitava (36-47, C2-B2).
+            # Walking sai do "root-fifth" puro mas permanece no registro do baixo.
+            walking_pitch = bass_octave_base + ((bass_pc + interval) % 12)
+            bass_events.append((note_t, type('E', (), {
+                'event_type': 'NOTE_ON', 'pitch': walking_pitch,
+                'velocity': vel, 'instrument': 100,
             })()))
 
-        # Base: chord stamp no tempo 1 sempre (forte)
+        # ---------- BASE COM INVERSÕES ROTATIVAS ----------
+        # Alterna posição fundamental (root) e 1ª inversão a cada compasso.
+        # Cria movimento ascendente sutil que evita "pianola" repetitiva.
+        # Normaliza chord_pcs em pcs 0-11, ordena ascendente, depois rotaciona.
+        normalized = sorted(set(pc % 12 for pc in chord_pcs))
+        if bar_count % 2 == 0:
+            # Posição fundamental: [a, b, c]
+            voicing = normalized
+        else:
+            # 1ª inversão: [b, c, a+12] — sobe a fundamental uma oitava
+            voicing = normalized[1:] + [normalized[0] + 12]
+
         chord_vel_strong = vel_medium if is_breath_bar else vel_strong
-        for pc in chord_pcs:
-            chord_pitch = chord_octave_base + (pc % 12)
+        t_mid = t + bar_duration / 2
+
+        for pc in voicing:
+            chord_pitch = chord_octave_base + (pc % 24)  # %24 acomoda +12
             base_events.append((t, type('E', (), {
                 'event_type': 'NOTE_ON', 'pitch': chord_pitch,
                 'velocity': chord_vel_strong, 'instrument': 101,
@@ -236,8 +259,8 @@ def _inject_solid_foundation(instrument_tracks: dict, tempo: int,
 
         # Base: stamp no tempo 3 — EXCETO em breath bar (cria respiração)
         if not is_breath_bar and t_mid < total_duration:
-            for pc in chord_pcs:
-                chord_pitch = chord_octave_base + (pc % 12)
+            for pc in voicing:
+                chord_pitch = chord_octave_base + (pc % 24)
                 base_events.append((t_mid, type('E', (), {
                     'event_type': 'NOTE_ON', 'pitch': chord_pitch,
                     'velocity': vel_medium, 'instrument': 101,
@@ -272,20 +295,27 @@ def _enforce_min_gap(events: list, min_gap: float = 0.25) -> list:
     return result
 
 
-def _enforce_monophony(events: list) -> list:
+def _enforce_monophony(events: list, max_duration: float = 1.2) -> list:
     """
     Força monofonia no registro: cada NOTE_ON fecha a nota anterior ainda ativa.
-    Insere NOTE_OFF sintético no timestamp do novo NOTE_ON pra encerrar a anterior.
+    Cap agressivo de duração: nenhuma nota dura mais que max_duration, mesmo
+    sem retrigger ou NOTE_OFF natural — fundamental pra evitar sustains de
+    3-5s que aparecem como "drone" no piano roll do solo.
     """
     result = []
     active_pitch = None
     active_onset = None
+    last_instr = 0
 
     for item in sorted(events, key=lambda x: x[0]):
         t, event = item
         if event.event_type == 'NOTE_ON':
-            if active_pitch is not None and active_pitch != event.pitch:
-                result.append((t, type('E', (), {
+            last_instr = event.instrument
+            if active_pitch is not None and active_onset is not None:
+                # Sempre fecha a nota anterior antes da nova (mesmo se mesmo pitch).
+                # Isso garante visual limpo no piano roll e evita merging contínuo.
+                close_at = min(t, active_onset + max_duration)
+                result.append((close_at, type('E', (), {
                     'event_type': 'NOTE_OFF', 'pitch': active_pitch,
                     'velocity': 0, 'instrument': event.instrument,
                 })()))
@@ -296,6 +326,14 @@ def _enforce_monophony(events: list) -> list:
             result.append(item)
             if event.pitch == active_pitch:
                 active_pitch = None
+                active_onset = None
+
+    # Cap a última nota se ficou pendente (garante que nenhum NOTE_ON fica órfão)
+    if active_pitch is not None and active_onset is not None:
+        result.append((active_onset + max_duration, type('E', (), {
+            'event_type': 'NOTE_OFF', 'pitch': active_pitch,
+            'velocity': 0, 'instrument': last_instr,
+        })()))
 
     return result
 
