@@ -126,33 +126,36 @@ def _apply_band_filters(instrument_tracks: dict, tempo: int, seed: int = 42) -> 
 
 
 def _inject_solid_foundation(instrument_tracks: dict, tempo: int,
-                             key_root: int, total_duration: float) -> dict:
+                             key_root: int, key_mode: str,
+                             total_duration: float) -> dict:
     """
     Substitui o conteúdo dos slots Bass (100) e Base (101) por fundação rítmica
-    sintética baseada na progressão I-V-vi-IV. O slot Solo (102) é preservado e
-    enriquecido — notas do modelo que estavam no registro Base são promovidas
-    pra Solo (transpostas +12) pra não perder material melódico.
+    sintética baseada na progressão diatônica do tom. O slot Solo (102) é
+    preservado e enriquecido com notas promovidas do registro Base original.
 
-    A cada compasso (4/4):
-      - Bass toca a tônica do acorde (oitava grave) no tempo 1.
-      - Base toca o tríade do acorde (chord stamp) nos tempos 1 e 3.
+    Progressões usadas:
+      - Maior: I-V-vi-IV (clássica pop)
+      - Menor: i-VI-iv-V (V harmônico — clássica pop minor)
 
-    Solo: notas originalmente em 48-65 sobem +12 semitons e juntam com solo;
-    depois aplica gap mínimo de 0.25s (~ colcheia a 95 BPM) entre NOTE_ONs
-    pra evitar melodia mais densa que a base — fluxo musical respirando.
+    Bass dinâmico: alterna tônica (tempo 1) e quinta (tempo 3) dentro do BAR.
+    Base dinâmica: stamp em tempo 1 + tempo 3, mas a cada 4º compasso pula o
+                   tempo 3 pra criar respiração ("breath bar").
+    Velocity: variação sutil entre stamps fortes (90) e médios (70).
+
+    Solo: notas em 48-65 sobem +12 (preservadas como melodia); aplica gap
+    mínimo de 0.25s entre NOTE_ONs pra evitar densidade > base.
 
     Args:
-        instrument_tracks: dict com slots virtuais 100/101/102 já populados.
+        instrument_tracks: dict com slots 100/101/102 já populados.
         tempo: BPM da peça.
         key_root: root do tom em semitons (0=C, 2=D, ...).
-        total_duration: duração da peça em segundos (vem do current_time final).
+        key_mode: 'major' ou 'minor'.
+        total_duration: duração total em segundos.
     """
     beat_duration = 60.0 / tempo
     bar_duration = beat_duration * 4
 
-    # Promove notas do registro Base original pro Solo (+12 semitons).
-    # Faz ANTES de substituir o slot 101 — assim a melodia que o modelo
-    # escreveu no registro médio não é perdida quando o chord stamp entra.
+    # Promove notas do registro Base pro Solo (+12) ANTES de substituir
     promoted = []
     for item in instrument_tracks.get(101, []):
         t, event = item
@@ -165,24 +168,34 @@ def _inject_solid_foundation(instrument_tracks: dict, tempo: int,
         instrument_tracks[102] = []
     instrument_tracks[102].extend(promoted)
 
-    # Suaviza densidade do solo: gap mínimo entre NOTE_ONs sucessivos
+    # Gap mínimo entre NOTE_ONs do solo (~ colcheia a 95 BPM)
     instrument_tracks[102] = _enforce_min_gap(
         instrument_tracks[102], min_gap=0.25
     )
 
-    # Progressão I-V-vi-IV: cada entrada é (root_pc, [chord_pcs])
-    # PCs estão em 0..11 e mapeamos pra MIDI somando oitavas adequadas
-    progression = [
-        (key_root,            [key_root,      key_root + 4, key_root + 7]),  # I  (maior)
-        (key_root + 7,        [key_root + 7,  key_root + 11, key_root + 2]), # V  (maior)
-        (key_root + 9,        [key_root + 9,  key_root + 12, key_root + 16]), # vi (menor)
-        (key_root + 5,        [key_root + 5,  key_root + 9, key_root + 12]),  # IV (maior)
-    ]
+    # Progressão por modo. Cada entrada: (bass_root_pc, [chord_pcs])
+    if key_mode == 'minor':
+        # i - VI - iv - V (V maior com 3ª maior — leading tone harmônico)
+        progression = [
+            (key_root,     [key_root,      key_root + 3,  key_root + 7]),   # i  (menor)
+            (key_root + 8, [key_root + 8,  key_root + 12, key_root + 15]),  # VI (relativa maior)
+            (key_root + 5, [key_root + 5,  key_root + 8,  key_root + 12]),  # iv (menor)
+            (key_root + 7, [key_root + 7,  key_root + 11, key_root + 14]),  # V  (maior)
+        ]
+    else:
+        # I - V - vi - IV (clássica pop maior)
+        progression = [
+            (key_root,     [key_root,      key_root + 4,  key_root + 7]),   # I
+            (key_root + 7, [key_root + 7,  key_root + 11, key_root + 14]),  # V
+            (key_root + 9, [key_root + 9,  key_root + 12, key_root + 16]),  # vi
+            (key_root + 5, [key_root + 5,  key_root + 9,  key_root + 12]),  # IV
+        ]
 
-    bass_octave_base = 36   # C2 — registro de baixo confortável
-    chord_octave_base = 48  # C3 — registro de base/harmonia
-    velocity_strong = 90    # forte (será amplificado pelo boost no render)
-    velocity_weak   = 70    # menos forte (chord stamp do tempo 3)
+    bass_octave_base = 36   # C2
+    chord_octave_base = 48  # C3
+    vel_strong = 95
+    vel_medium = 75
+    vel_soft   = 60
 
     bass_events = []
     base_events = []
@@ -191,36 +204,47 @@ def _inject_solid_foundation(instrument_tracks: dict, tempo: int,
 
     while t < total_duration:
         bass_pc, chord_pcs = progression[bar_count % 4]
+        is_breath_bar = (bar_count % 4 == 3)  # último bar do ciclo respira
 
-        # Bass: tônica do acorde no tempo forte (BAR boundary)
-        bass_pitch = bass_octave_base + (bass_pc % 12)
+        # Bass: tônica no tempo 1, quinta no tempo 3 (movimento root-fifth)
+        # Velocity decai sutilmente em breath bar pra dar sensação de cadência
+        bass_root_pitch = bass_octave_base + (bass_pc % 12)
+        bass_fifth_pitch = bass_octave_base + ((bass_pc + 7) % 12)
+        bass_vel = vel_medium if is_breath_bar else vel_strong
+
         bass_events.append((t, type('E', (), {
-            'event_type': 'NOTE_ON', 'pitch': bass_pitch,
-            'velocity': velocity_strong, 'instrument': 100,
+            'event_type': 'NOTE_ON', 'pitch': bass_root_pitch,
+            'velocity': bass_vel, 'instrument': 100,
         })()))
+        # Quinta no tempo 3 (meio do BAR)
+        t_mid = t + bar_duration / 2
+        if t_mid < total_duration:
+            bass_events.append((t_mid, type('E', (), {
+                'event_type': 'NOTE_ON', 'pitch': bass_fifth_pitch,
+                'velocity': vel_soft, 'instrument': 100,
+            })()))
 
-        # Base: chord stamp no tempo 1 (forte)
+        # Base: chord stamp no tempo 1 sempre (forte)
+        chord_vel_strong = vel_medium if is_breath_bar else vel_strong
         for pc in chord_pcs:
             chord_pitch = chord_octave_base + (pc % 12)
             base_events.append((t, type('E', (), {
                 'event_type': 'NOTE_ON', 'pitch': chord_pitch,
-                'velocity': velocity_strong, 'instrument': 101,
+                'velocity': chord_vel_strong, 'instrument': 101,
             })()))
 
-        # Base: chord stamp no tempo 3 (médio) — pulsação half-note
-        t_mid = t + bar_duration / 2
-        if t_mid < total_duration:
+        # Base: stamp no tempo 3 — EXCETO em breath bar (cria respiração)
+        if not is_breath_bar and t_mid < total_duration:
             for pc in chord_pcs:
                 chord_pitch = chord_octave_base + (pc % 12)
                 base_events.append((t_mid, type('E', (), {
                     'event_type': 'NOTE_ON', 'pitch': chord_pitch,
-                    'velocity': velocity_weak, 'instrument': 101,
+                    'velocity': vel_medium, 'instrument': 101,
                 })()))
 
         t += bar_duration
         bar_count += 1
 
-    # Substitui slots de bass e base (solo já foi enriquecido acima)
     instrument_tracks[100] = bass_events
     instrument_tracks[101] = base_events
     return instrument_tracks
@@ -281,7 +305,8 @@ def tokens_to_midi(tokens: List[int], tokenizer: MIDITokenizer,
                    render_as_band: bool = False,
                    render_as_trio: bool = False,
                    solid_base: bool = False,
-                   key_root: int = None) -> bool:
+                   key_root: int = None,
+                   key_mode: str = 'major') -> bool:
     """
     Converte uma sequência de tokens em um arquivo MIDI.
 
@@ -350,7 +375,7 @@ def tokens_to_midi(tokens: List[int], tokenizer: MIDITokenizer,
         if solid_base and key_root is not None:
             instrument_tracks = _inject_solid_foundation(
                 instrument_tracks, tempo=tempo, key_root=key_root,
-                total_duration=current_time,
+                key_mode=key_mode, total_duration=current_time,
             )
 
         # Fecha notas abertas sem NOTE_OFF correspondente (cap em max_note_duration)

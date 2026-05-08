@@ -64,6 +64,11 @@ python generate.py --checkpoint checkpoints/checkpoint_epoch_74.pt --output musi
 # com filtros funcionais: bass quantizado ao BAR, base só em clusters, solo livre
 python generate.py --checkpoint checkpoints/checkpoint_epoch_74.pt --output trio.mid --key C --temperature 0.9 --top_k 40 --tempo 100 --render_as_trio
 
+# Geração modo TRIO + SOLID BASE (banda híbrida ML+algorítmica)
+# Bass marca tônica/quinta no compasso; base toca acordes I-V-vi-IV;
+# solo vem do modelo. Funciona em maior (--key C) e menor (--key Am).
+python generate.py --checkpoint checkpoints/checkpoint_epoch_74.pt --output banda.mid --key Am --temperature 0.95 --top_k 50 --tempo 95 --render_as_trio --solid_base
+
 # Geração modo BANDA (piano remapeado pra Bass GM + Nylon Guitar + Lead Guitar)
 # AVISO: sintetizadores GM de guitarra/baixo são de baixa fidelidade
 python generate.py --checkpoint checkpoints/checkpoint_epoch_74.pt --output banda.mid --key C --temperature 0.9 --top_k 40 --tempo 100 --render_as_band

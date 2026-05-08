@@ -233,7 +233,7 @@ def build_vocab_constraint(tokenizer: MIDITokenizer, device: torch.device,
     bass_bar_mask = None
     chord_masks   = None
     if key_str and bar_id is not None:
-        root, _ = _parse_key(key_str)
+        root, mode = _parse_key(key_str)
 
         # Bass: tônica e quinta prioritárias no início de cada BAR (slot 2)
         tonic_fifth_pcs = {root % 12, (root + 7) % 12}
@@ -242,13 +242,22 @@ def build_vocab_constraint(tokenizer: MIDITokenizer, device: torch.device,
             if pitch % 12 not in tonic_fifth_pcs:
                 bass_bar_mask[tid] = -2.0
 
-        # Progressão I-V-vi-IV rotativa por compasso (slot 4 — Harmonia)
-        _progression = [
-            {root % 12,      (root+4) % 12, (root+7) % 12},   # I
-            {(root+7) % 12, (root+11) % 12, (root+2) % 12},   # V
-            {(root+9) % 12,  (root+0) % 12, (root+4) % 12},   # vi
-            {(root+5) % 12,  (root+9) % 12, (root+0) % 12},   # IV
-        ]
+        # Progressão harmônica rotativa por compasso (slot 4 — Harmonia)
+        # Maior usa I-V-vi-IV; menor usa i-VI-iv-V (V harmônico com 3ª maior)
+        if mode == 'minor':
+            _progression = [
+                {root % 12,      (root+3) % 12, (root+7) % 12},   # i  (menor)
+                {(root+8) % 12,  (root+0) % 12, (root+3) % 12},   # VI (relativa maior)
+                {(root+5) % 12,  (root+8) % 12, (root+0) % 12},   # iv (menor)
+                {(root+7) % 12, (root+11) % 12, (root+2) % 12},   # V  (maior, leading tone)
+            ]
+        else:
+            _progression = [
+                {root % 12,      (root+4) % 12, (root+7) % 12},   # I
+                {(root+7) % 12, (root+11) % 12, (root+2) % 12},   # V
+                {(root+9) % 12,  (root+0) % 12, (root+4) % 12},   # vi
+                {(root+5) % 12,  (root+9) % 12, (root+0) % 12},   # IV
+            ]
         chord_masks = []
         for chord_pcs in _progression:
             m = torch.zeros(vocab_size, device=device)
@@ -565,14 +574,15 @@ def main():
         else:
             output_path = args.output
         
-        # Resolve key_root pra solid_base (precisa do parser do generate.py)
+        # Resolve key_root e key_mode pra solid_base
         solid_base_root = None
+        solid_base_mode = None
         if args.solid_base:
             if not args.key:
-                raise ValueError("--solid_base requer --key (ex: --key C)")
+                raise ValueError("--solid_base requer --key (ex: --key C ou --key Am)")
             if not (args.render_as_trio or args.render_as_band):
                 raise ValueError("--solid_base requer --render_as_trio ou --render_as_band")
-            solid_base_root, _ = _parse_key(args.key)
+            solid_base_root, solid_base_mode = _parse_key(args.key)
 
         success = tokens_to_midi(
             tokens=generated_tokens,
@@ -584,6 +594,7 @@ def main():
             max_note_duration=args.max_note_duration,
             solid_base=args.solid_base,
             key_root=solid_base_root,
+            key_mode=solid_base_mode,
         )
         
         if success:
