@@ -114,6 +114,15 @@ def _apply_band_filters(instrument_tracks: dict, tempo: int, seed: int = 42) -> 
                 keep_idx.add(i)
         instrument_tracks[101] = [notes[i] for i in sorted(keep_idx)]
 
+    # Solo: quantiza pra grade rítmica de 1/8 de tempo ANTES da monofonia.
+    # Sem isso o solo flutua entre beats; com snap, cada nota cai em posição
+    # métrica clara — sente "tocando no compasso" e não correndo solto.
+    # Após quantizar, monofonia descarta colisões (múltiplas notas no mesmo slot).
+    if 102 in instrument_tracks:
+        instrument_tracks[102] = _quantize_to_grid(
+            instrument_tracks[102], beat_duration=beat_duration, subdivisions=2
+        )
+
     # Bass e Solo: monofônicos — cada NOTE_ON fecha a nota anterior do mesmo
     # registro. Piano real toca melodia e linha de baixo em uma nota por vez;
     # polifonia no solo/baixo cria sensação de "notas comendo umas às outras".
@@ -175,6 +184,16 @@ def _inject_solid_foundation(instrument_tracks: dict, tempo: int,
     # razoável (~semicolcheia a 100 BPM) sem virar metralhadora de notas.
     instrument_tracks[102] = _enforce_min_gap(
         instrument_tracks[102], min_gap=0.15
+    )
+
+    # Quantiza solo (incluindo notas promovidas da base) ao grid de 1/8 de tempo
+    # e re-aplica monofonia: notas promovidas vinham sem NOTE_OFF, podiam
+    # sobrepor com notas do modelo. Cap em 1.0s aqui pra punch melódico.
+    instrument_tracks[102] = _quantize_to_grid(
+        instrument_tracks[102], beat_duration=beat_duration, subdivisions=2
+    )
+    instrument_tracks[102] = _enforce_monophony(
+        instrument_tracks[102], max_duration=1.0
     )
 
     # Progressão por modo. Cada entrada: (bass_root_pc, [chord_pcs])
@@ -272,6 +291,29 @@ def _inject_solid_foundation(instrument_tracks: dict, tempo: int,
     instrument_tracks[100] = bass_events
     instrument_tracks[101] = base_events
     return instrument_tracks
+
+
+def _quantize_to_grid(events: list, beat_duration: float,
+                      subdivisions: int = 2) -> list:
+    """
+    Snapeia cada NOTE_ON pra posição mais próxima da grade rítmica
+    (default: 1/8 de tempo — 2 subdivisões por beat = 8 slots por bar 4/4).
+
+    Resultado: melodia "respira no compasso". Notas que caíam entre beats
+    passam a tocar em ponto métrico claro, alinhando o solo com bass/base.
+    NOTE_OFFs ficam intactos — a duração das notas é normalizada depois pelo
+    _enforce_monophony.
+    """
+    grid = beat_duration / subdivisions
+    result = []
+    for item in events:
+        t, event = item
+        if event.event_type == 'NOTE_ON':
+            snapped = round(t / grid) * grid
+            result.append((snapped, event))
+        else:
+            result.append(item)
+    return result
 
 
 def _enforce_min_gap(events: list, min_gap: float = 0.25) -> list:
