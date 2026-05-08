@@ -20,10 +20,14 @@ TCC/                          ← raiz do repositório git
     ├── data_processor.py     ← tokenização REMI-like e dataset
     ├── model.py              ← arquitetura Transformer
     ├── train.py              ← loop de treinamento (com AMP)
-    ├── generate.py           ← geração com filtros de escala/registro e modo banda
-    ├── music_utils.py        ← conversão tokens → MIDI (com render_as_band)
+    ├── generate.py           ← geração com filtros de escala/registro e modos de render
+    ├── music_utils.py        ← conversão tokens → MIDI (trio / band / solid_base)
     ├── diagnostico.py        ← diagnóstico de mode collapse
-    └── show_midi.py          ← piano roll PNG
+    ├── show_midi.py          ← piano roll PNG
+    ├── download_datasets.py  ← downloader (MAESTRO/Groove/POP909)
+    └── README.md             ← documentação geral (foco usuário externo)
+
+notes.md  ← esqueleto da dissertação final (raiz do repo)
 ```
 
 ## Hardware
@@ -57,20 +61,22 @@ python train.py --data_path ./datasets/maestro ./datasets/pop909 ./datasets/groo
 # Se mudar a função de perda entre runs, use --reset_best_loss
 python train.py --data_path ./datasets/maestro ./datasets/pop909 ./datasets/groove --resume checkpoints/checkpoint_epoch_74.pt --reset_best_loss
 
-# Geração modo PIANO SOLO (output original do modelo)
-python generate.py --checkpoint checkpoints/checkpoint_epoch_74.pt --output musica.mid --key C --temperature 0.9 --top_k 40 --tempo 100
-
-# Geração modo TRIO (recomendado) — 3 tracks de piano (solo/base/baixo)
-# com filtros funcionais: bass quantizado ao BAR, base só em clusters, solo livre
-python generate.py --checkpoint checkpoints/checkpoint_epoch_74.pt --output trio.mid --key C --temperature 0.9 --top_k 40 --tempo 100 --render_as_trio
-
-# Geração modo TRIO + SOLID BASE (banda híbrida ML+algorítmica)
-# Bass marca tônica/quinta no compasso; base toca acordes I-V-vi-IV;
-# solo vem do modelo. Funciona em maior (--key C) e menor (--key Am).
+# ============ GERAÇÃO ============
+# MODO RECOMENDADO PRO TCC: TRIO + SOLID BASE (banda híbrida ML+algorítmica)
+# Bass marca tônica/quinta no compasso; base toca acordes I-V-vi-IV (ou i-VI-iv-V em
+# menor); solo (registro >65) vem do modelo. Funciona em maior (--key C) e menor (--key Am).
 python generate.py --checkpoint checkpoints/checkpoint_epoch_74.pt --output banda.mid --key Am --temperature 0.95 --top_k 50 --tempo 95 --render_as_trio --solid_base
 
-# Geração modo BANDA (piano remapeado pra Bass GM + Nylon Guitar + Lead Guitar)
-# AVISO: sintetizadores GM de guitarra/baixo são de baixa fidelidade
+# Modo TRIO sem solid_base — 3 tracks de piano (solo/base/baixo) com filtros
+# funcionais (bass quantizado ao BAR, base só em clusters, solo monofônico).
+# Tudo vem do modelo, sem fundação sintética.
+python generate.py --checkpoint checkpoints/checkpoint_epoch_74.pt --output trio.mid --key C --temperature 0.9 --top_k 40 --tempo 100 --render_as_trio
+
+# Modo PIANO SOLO single-track (output cru do modelo, sem split por registro)
+python generate.py --checkpoint checkpoints/checkpoint_epoch_74.pt --output musica.mid --key C --temperature 0.9 --top_k 40 --tempo 100
+
+# Modo BANDA (piano remapeado pra Bass GM + Nylon Guitar + Lead Guitar)
+# AVISO: sintetizadores GM de guitarra/baixo são de baixa fidelidade — uso para demo só
 python generate.py --checkpoint checkpoints/checkpoint_epoch_74.pt --output banda.mid --key C --temperature 0.9 --top_k 40 --tempo 100 --render_as_band
 
 # Tonalidade automática via Krumhansl-Schmuckler
@@ -126,6 +132,22 @@ A abordagem final **força INSTRUMENT_0 (Piano)** durante a geração. As 3 voze
 
 No modo `--render_as_band`, essas 3 vozes são remapeadas para timbres distintos em canais GM separados (Bass + Nylon Guitar + Lead Guitar), simulando uma banda a partir do modelo treinado em piano solo.
 
+### Modos de render — escolha rápida
+
+| Modo | Flag | Quando usar |
+|------|------|-------------|
+| Piano solo single-track | (default) | Output cru do modelo, debug, baseline |
+| Trio piano | `--render_as_trio` | 3 tracks de piano (solo/base/baixo) com filtros funcionais |
+| Trio piano + base sintética | `--render_as_trio --solid_base --key X` | **Modo canônico do TCC** — banda híbrida ML+algorítmica |
+| Banda GM | `--render_as_band` | Demo com timbres GM distintos (qualidade limitada de sintetizadores) |
+
+**Detalhes do `--solid_base`** (só ativa se `--key` for fornecido):
+- Progressão: I-V-vi-IV em maior; i-VI-iv-V em menor (V harmônico com 3ª maior)
+- Bass: tônica no tempo 1 + quinta no tempo 3 de cada BAR (root-fifth movement)
+- Base: chord stamp em tempo 1 sempre forte; tempo 3 com "breath bar" a cada 4 compassos
+- Solo: monofonia + gap mínimo 0.25s entre NOTE_ONs; notas do registro Base são promovidas (+12 semitons) para enriquecer a melodia
+- Velocity boost 1.6× (mín 80, máx 120) — compensa dynamics suaves do MAESTRO no GM Piano
+
 ### Restrições de vocabulário na geração (`generate.py`)
 
 `build_vocab_constraint()` implementa via `vocab_constraint_fn`:
@@ -142,12 +164,15 @@ Removidas (modelo aprende do dataset): cycling forçado, penalidade de steps ím
 
 ### Conversão para MIDI (`music_utils.py`)
 - Apenas NOTE_ON vai para `instrument_tracks`; NOTE_OFF gerados pelo hanging-note fix
-- `max_note_duration=1.5s` — nenhuma nota dura mais que isso
+- `max_note_duration=1.0s` — nenhuma nota dura mais que isso (cap anti-hanging)
 - NOTE_OFF ordenado antes de NOTE_ON no mesmo timestamp
+- Modo **trio** (`render_as_trio=True`): mesma separação por registro do modo band, mas mantém Grand Piano em todas as tracks (qualidade GM superior)
 - Modo **band** (`render_as_band=True`): override do slot do token baseado no registro de pitch
   - Bass: pitch ≤47 → canal 2, program 33 (Finger Bass)
   - Base: 48–65 → canal 1, program 24 (Nylon Guitar)
   - Solo: ≥66 → canal 0, program 30 (Distortion Guitar)
+- Filtros funcionais (`_apply_band_filters`): bass quantizado ao BAR (±0.15s, groove 15%); base só em clusters (≥2 notas em 0.5s); bass e solo monofônicos (cada NOTE_ON fecha a nota anterior do mesmo registro)
+- `_inject_solid_foundation`: substitui bass+base pelo I-V-vi-IV sintético (ativado por `--solid_base`)
 - `--tempo` no `generate.py` controla o BPM de renderização (default 100)
 
 ### Treinamento (`train.py`)
@@ -163,12 +188,13 @@ Removidas (modelo aprende do dataset): cycling forçado, penalidade de steps ím
 ## Status do Treinamento
 
 - **Checkpoint GOLD:** `checkpoint_epoch_74.pt` — validado visual e auditivamente com re-entry bias funcional
-- **Epoch 99/109:** colapsaram para dyade fixo após platô longo em LR baixo — descartados
+- **Checkpoints úteis disponíveis:** `ep49`, `ep74` (GOLD), `ep79` — todos os outros foram descartados
+- **Epoch 89/94/99/104/109:** colapsaram para dyade fixo após platô longo em LR baixo — deletados
 - **Decisão:** congelar ep74 como checkpoint final do TCC; trabalho agora é refinar geração e rodar avaliação
 
 ## Pendências para a Defesa Final
 
-1. **Gerar amostras finais modo banda** (`--render_as_band`) com ep74 e validar com orientador
+1. **Gerar amostras finais modo trio + solid_base** (`--render_as_trio --solid_base --key X`) com ep74 em maior e menor, e validar com orientador
 2. **Pipeline de bateria** — pendente: treino separado mínimo com Groove MIDI OU algoritmo determinístico
 3. **Avaliação com usuários** — 5–10 pessoas, escala MOS (Mean Opinion Score), avaliação cega
 4. **Baseline Markov chain** — bigrama de pitches do MAESTRO, comparação quantitativa
