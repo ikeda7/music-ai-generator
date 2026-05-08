@@ -270,7 +270,7 @@ def build_vocab_constraint(tokenizer: MIDITokenizer, device: torch.device,
     silence_slope    = 0.02   # rampa linear; satura em ~140 tokens
 
     # Estado mutável — rastreia slot ativo e última NOTE_ON por slot
-    min_tokens = 300
+    min_tokens = 600  # bloqueia EOS por mais tempo: peças curtas (~20s) eram comuns com 300
     state = {
         'last_pitch': None,
         'steps': 0,

@@ -75,7 +75,7 @@ def _apply_band_filters(instrument_tracks: dict, tempo: int, seed: int = 42) -> 
     beat_duration = 60.0 / tempo       # segundos por beat
     bar_duration = beat_duration * 4   # 4/4 tempo
     bar_tolerance = 0.15               # janela do tempo forte
-    cluster_window = 0.3               # janela pra detectar acorde (mais permissiva)
+    cluster_window = 0.5               # janela pra detectar acorde (meio beat a 95 BPM)
     groove_probability = 0.15          # chance de bass tocar fora do tempo
 
     # Bass: quantiza NOTE_ON ao BAR; descarta fora com prob 1 - groove
@@ -268,9 +268,13 @@ def tokens_to_midi(tokens: List[int], tokenizer: MIDITokenizer,
                 delta_ticks = max(0, int((event_time - last_time) * ticks_per_beat * tempo / 60))
 
                 if event.event_type == 'NOTE_ON':
+                    # Velocity boost: garante mínimo 80 (audível) e amplifica ~1.6x.
+                    # MAESTRO foi gravado com dynamics suaves; o GM Piano renderizado
+                    # ficava abafado. Cap em 120 evita clipping.
+                    boosted_vel = max(80, min(120, int(event.velocity * 1.6)))
                     instr_track.append(mido.Message(
                         'note_on', channel=channel,
-                        note=event.pitch, velocity=event.velocity,
+                        note=event.pitch, velocity=boosted_vel,
                         time=delta_ticks
                     ))
                 elif event.event_type == 'NOTE_OFF':
