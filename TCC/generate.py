@@ -486,6 +486,11 @@ def main():
                        help='Duração máxima de cada nota em segundos (padrão 1.0). '
                             'Valores menores deixam a peça mais "respirada" e '
                             'reduzem a sensação de notas comendo umas às outras.')
+    parser.add_argument('--solid_base', action='store_true',
+                       help='Substitui bass e base do modelo por fundação sintética '
+                            '(progressão I-V-vi-IV, chord stamps em tempo 1 e 3, '
+                            'baixo no tempo forte). Solo (registro alto) vem do '
+                            'modelo. Requer --key e --render_as_trio (ou _band).')
 
     args = parser.parse_args()
     
@@ -560,6 +565,15 @@ def main():
         else:
             output_path = args.output
         
+        # Resolve key_root pra solid_base (precisa do parser do generate.py)
+        solid_base_root = None
+        if args.solid_base:
+            if not args.key:
+                raise ValueError("--solid_base requer --key (ex: --key C)")
+            if not (args.render_as_trio or args.render_as_band):
+                raise ValueError("--solid_base requer --render_as_trio ou --render_as_band")
+            solid_base_root, _ = _parse_key(args.key)
+
         success = tokens_to_midi(
             tokens=generated_tokens,
             tokenizer=tokenizer,
@@ -568,6 +582,8 @@ def main():
             render_as_band=args.render_as_band,
             render_as_trio=args.render_as_trio,
             max_note_duration=args.max_note_duration,
+            solid_base=args.solid_base,
+            key_root=solid_base_root,
         )
         
         if success:

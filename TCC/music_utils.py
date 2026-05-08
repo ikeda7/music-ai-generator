@@ -125,6 +125,81 @@ def _apply_band_filters(instrument_tracks: dict, tempo: int, seed: int = 42) -> 
     return instrument_tracks
 
 
+def _inject_solid_foundation(instrument_tracks: dict, tempo: int,
+                             key_root: int, total_duration: float) -> dict:
+    """
+    Substitui o conteúdo dos slots Bass (100) e Base (101) por fundação rítmica
+    sintética baseada na progressão I-V-vi-IV. O slot Solo (102) é preservado.
+
+    A cada compasso (4/4):
+      - Bass toca a tônica do acorde (oitava grave) no tempo 1.
+      - Base toca o tríade do acorde (chord stamp) nos tempos 1 e 3.
+
+    Args:
+        instrument_tracks: dict com slots virtuais 100/101/102 já populados.
+        tempo: BPM da peça.
+        key_root: root do tom em semitons (0=C, 2=D, ...).
+        total_duration: duração da peça em segundos (vem do current_time final).
+    """
+    beat_duration = 60.0 / tempo
+    bar_duration = beat_duration * 4
+
+    # Progressão I-V-vi-IV: cada entrada é (root_pc, [chord_pcs])
+    # PCs estão em 0..11 e mapeamos pra MIDI somando oitavas adequadas
+    progression = [
+        (key_root,            [key_root,      key_root + 4, key_root + 7]),  # I  (maior)
+        (key_root + 7,        [key_root + 7,  key_root + 11, key_root + 2]), # V  (maior)
+        (key_root + 9,        [key_root + 9,  key_root + 12, key_root + 16]), # vi (menor)
+        (key_root + 5,        [key_root + 5,  key_root + 9, key_root + 12]),  # IV (maior)
+    ]
+
+    bass_octave_base = 36   # C2 — registro de baixo confortável
+    chord_octave_base = 48  # C3 — registro de base/harmonia
+    velocity_strong = 90    # forte (será amplificado pelo boost no render)
+    velocity_weak   = 70    # menos forte (chord stamp do tempo 3)
+
+    bass_events = []
+    base_events = []
+    bar_count = 0
+    t = 0.0
+
+    while t < total_duration:
+        bass_pc, chord_pcs = progression[bar_count % 4]
+
+        # Bass: tônica do acorde no tempo forte (BAR boundary)
+        bass_pitch = bass_octave_base + (bass_pc % 12)
+        bass_events.append((t, type('E', (), {
+            'event_type': 'NOTE_ON', 'pitch': bass_pitch,
+            'velocity': velocity_strong, 'instrument': 100,
+        })()))
+
+        # Base: chord stamp no tempo 1 (forte)
+        for pc in chord_pcs:
+            chord_pitch = chord_octave_base + (pc % 12)
+            base_events.append((t, type('E', (), {
+                'event_type': 'NOTE_ON', 'pitch': chord_pitch,
+                'velocity': velocity_strong, 'instrument': 101,
+            })()))
+
+        # Base: chord stamp no tempo 3 (médio) — pulsação half-note
+        t_mid = t + bar_duration / 2
+        if t_mid < total_duration:
+            for pc in chord_pcs:
+                chord_pitch = chord_octave_base + (pc % 12)
+                base_events.append((t_mid, type('E', (), {
+                    'event_type': 'NOTE_ON', 'pitch': chord_pitch,
+                    'velocity': velocity_weak, 'instrument': 101,
+                })()))
+
+        t += bar_duration
+        bar_count += 1
+
+    # Substitui slots de bass e base; preserva solo (102)
+    instrument_tracks[100] = bass_events
+    instrument_tracks[101] = base_events
+    return instrument_tracks
+
+
 def _enforce_monophony(events: list) -> list:
     """
     Força monofonia no registro: cada NOTE_ON fecha a nota anterior ainda ativa.
@@ -157,7 +232,9 @@ def tokens_to_midi(tokens: List[int], tokenizer: MIDITokenizer,
                    output_path: str, tempo: int = 120,
                    max_note_duration: float = 1.0,
                    render_as_band: bool = False,
-                   render_as_trio: bool = False) -> bool:
+                   render_as_trio: bool = False,
+                   solid_base: bool = False,
+                   key_root: int = None) -> bool:
     """
     Converte uma sequência de tokens em um arquivo MIDI.
 
@@ -219,6 +296,15 @@ def tokens_to_midi(tokens: List[int], tokenizer: MIDITokenizer,
         # e atribui papéis musicais claros sem mexer no modelo — tudo no render.
         if remap_by_register:
             instrument_tracks = _apply_band_filters(instrument_tracks, tempo=tempo)
+
+        # Modo --solid_base: substitui bass/base do modelo por fundação sintética
+        # alinhada à progressão I-V-vi-IV. O solo (registro alto) vem do modelo.
+        # Resultado: arranjo híbrido ML+algorítmico com base e baixo "marcando".
+        if solid_base and key_root is not None:
+            instrument_tracks = _inject_solid_foundation(
+                instrument_tracks, tempo=tempo, key_root=key_root,
+                total_duration=current_time,
+            )
 
         # Fecha notas abertas sem NOTE_OFF correspondente (cap em max_note_duration)
         for instr_idx, instr_events in instrument_tracks.items():
