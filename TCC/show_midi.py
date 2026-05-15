@@ -17,10 +17,11 @@ import matplotlib.patches as patches
 
 # Paleta por papel funcional. Track sem papel claro cai pro fallback.
 _ROLE_COLORS = {
-    'Solo':   '#4CAF50',   # verde
-    'Base':   '#2196F3',   # azul
-    'Baixo':  '#9C27B0',   # roxo
-    'Outro':  '#FF9800',   # laranja (fallback)
+    'Solo':    '#4CAF50',   # verde
+    'Base':    '#2196F3',   # azul
+    'Baixo':   '#9C27B0',   # roxo
+    'Bateria': '#E91E63',   # rosa/magenta
+    'Outro':   '#FF9800',   # laranja (fallback)
 }
 
 # Limites de registro pro auto-label (mesmos do music_utils._BAND_REGISTERS)
@@ -31,8 +32,11 @@ _REGISTER_LIMITS = [
 ]
 
 
-def _infer_role(notes) -> str:
-    """Classifica a track pelo registro mediano dos pitches."""
+def _infer_role(instrument) -> str:
+    """Classifica a track pelo flag is_drum ou registro mediano dos pitches."""
+    if instrument.is_drum:
+        return 'Bateria'
+    notes = instrument.notes
     if not notes:
         return 'Outro'
     pitches = sorted(n.pitch for n in notes)
@@ -51,7 +55,7 @@ def piano_roll_png(midi_path: str, output_path: str):
     for instrument in pm.instruments:
         if not instrument.notes:
             continue
-        role = _infer_role(instrument.notes)
+        role = _infer_role(instrument)
         tracks.append((role, instrument))
 
     if not tracks:

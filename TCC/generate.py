@@ -500,6 +500,10 @@ def main():
                             '(progressão I-V-vi-IV, chord stamps em tempo 1 e 3, '
                             'baixo no tempo forte). Solo (registro alto) vem do '
                             'modelo. Requer --key e --render_as_trio (ou _band).')
+    parser.add_argument('--add_drums', action='store_true',
+                       help='Injeta padrão de bateria rock/pop 4/4 algorítmico '
+                            '(kick 1&3, snare 2&4, hihat 8x). Compatível com '
+                            'qualquer modo de render. Pitches GM padrão no canal 9.')
 
     args = parser.parse_args()
     
@@ -593,6 +597,7 @@ def main():
             render_as_trio=args.render_as_trio,
             max_note_duration=args.max_note_duration,
             solid_base=args.solid_base,
+            add_drums=args.add_drums,
             key_root=solid_base_root,
             key_mode=solid_base_mode,
         )

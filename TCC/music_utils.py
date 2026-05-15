@@ -57,6 +57,78 @@ def _band_slot_for_pitch(pitch: int) -> int:
     return 102
 
 
+# Slot virtual da bateria. Canal 9 no GM = percussão; pitches são mapeamentos GM:
+# 36=kick, 38=snare, 42=closed hi-hat, 46=open hi-hat
+_DRUM_SLOT = 200
+
+
+def _generate_drum_pattern(total_duration: float, tempo: int,
+                           seed: int = 42) -> list:
+    """
+    Padrão rock/pop básico 4/4 — algoritmo determinístico, sem ML:
+    - Kick (36):       beats 1 e 3 — fundação
+    - Snare (38):      beats 2 e 4 — backbeat
+    - Closed hihat (42): a cada colcheia (8 por bar) — tempo
+    - Open hihat (46): no último beat de cada 4º bar — crash de transição
+
+    Velocity tem variação aleatória ±5-8 por nota pra evitar som mecânico.
+    Determinístico (seed=42 por padrão) pra reprodutibilidade do TCC.
+    """
+    rng = random.Random(seed)
+    beat_duration = 60.0 / tempo
+    drum_events = []
+
+    beat = 0
+    t = 0.0
+    while t < total_duration:
+        beat_in_bar = beat % 4
+        bar_count = beat // 4
+        is_transition_bar = (bar_count % 4 == 3)
+
+        # Kick nos beats 1 e 3
+        if beat_in_bar in (0, 2):
+            drum_events.append((t, type('E', (), {
+                'event_type': 'NOTE_ON', 'pitch': 36,
+                'velocity': max(85, min(110, 100 + rng.randint(-5, 5))),
+                'instrument': _DRUM_SLOT,
+            })()))
+
+        # Snare nos beats 2 e 4
+        if beat_in_bar in (1, 3):
+            drum_events.append((t, type('E', (), {
+                'event_type': 'NOTE_ON', 'pitch': 38,
+                'velocity': max(85, min(105, 95 + rng.randint(-5, 5))),
+                'instrument': _DRUM_SLOT,
+            })()))
+
+        # Hi-hat fechado nas colcheias (beat e half-beat)
+        for sub in (0, 0.5):
+            t_hh = t + sub * beat_duration
+            if t_hh >= total_duration:
+                continue
+            # Open hi-hat no final do 4º bar pra marcar transição
+            use_open = (is_transition_bar and beat_in_bar == 3 and sub == 0.5)
+            drum_events.append((t_hh, type('E', (), {
+                'event_type': 'NOTE_ON',
+                'pitch': 46 if use_open else 42,
+                'velocity': max(55, min(85, 70 + rng.randint(-8, 8))),
+                'instrument': _DRUM_SLOT,
+            })()))
+
+        beat += 1
+        t += beat_duration
+
+    # NOTE_OFFs sintéticos — percussão soa curta (0.1s)
+    closed = []
+    for evt_t, evt in drum_events:
+        closed.append((evt_t, evt))
+        closed.append((evt_t + 0.1, type('E', (), {
+            'event_type': 'NOTE_OFF', 'pitch': evt.pitch,
+            'velocity': 0, 'instrument': _DRUM_SLOT,
+        })()))
+    return closed
+
+
 def _apply_band_filters(instrument_tracks: dict, tempo: int, seed: int = 42) -> dict:
     """
     Filtros funcionais aplicados no modo render_as_band para reduzir congestionamento
@@ -386,6 +458,7 @@ def tokens_to_midi(tokens: List[int], tokenizer: MIDITokenizer,
                    render_as_band: bool = False,
                    render_as_trio: bool = False,
                    solid_base: bool = False,
+                   add_drums: bool = False,
                    key_root: int = None,
                    key_mode: str = 'major') -> bool:
     """
@@ -459,6 +532,13 @@ def tokens_to_midi(tokens: List[int], tokenizer: MIDITokenizer,
                 key_mode=key_mode, total_duration=current_time,
             )
 
+        # Modo --add_drums: injeta padrão rock/pop algorítmico em canal 9 GM.
+        # Compatível com qualquer modo de render — só adiciona um slot novo (200).
+        if add_drums:
+            instrument_tracks[_DRUM_SLOT] = _generate_drum_pattern(
+                total_duration=current_time, tempo=tempo,
+            )
+
         # Fecha notas abertas sem NOTE_OFF correspondente (cap em max_note_duration)
         for instr_idx, instr_events in instrument_tracks.items():
             open_at = {}
@@ -486,7 +566,10 @@ def tokens_to_midi(tokens: List[int], tokenizer: MIDITokenizer,
             instr_track = mido.MidiTrack()
             mid.tracks.append(instr_track)
 
-            if render_as_trio:
+            if instr_idx == _DRUM_SLOT:
+                channel = 9
+                program = 0  # ignorado em canal 9
+            elif render_as_trio:
                 channel = _TRIO_CHANNEL.get(instr_idx, 0)
                 program = _TRIO_PROGRAM.get(instr_idx, 0)
             elif render_as_band:
@@ -510,7 +593,11 @@ def tokens_to_midi(tokens: List[int], tokenizer: MIDITokenizer,
                     # Velocity boost: garante mínimo 80 (audível) e amplifica ~1.6x.
                     # MAESTRO foi gravado com dynamics suaves; o GM Piano renderizado
                     # ficava abafado. Cap em 120 evita clipping.
-                    boosted_vel = max(80, min(120, int(event.velocity * 1.6)))
+                    # Bateria (slot 200) já tem velocidades calibradas — passa direto.
+                    if instr_idx == _DRUM_SLOT:
+                        boosted_vel = max(1, min(127, event.velocity))
+                    else:
+                        boosted_vel = max(80, min(120, int(event.velocity * 1.6)))
                     instr_track.append(mido.Message(
                         'note_on', channel=channel,
                         note=event.pitch, velocity=boosted_vel,
