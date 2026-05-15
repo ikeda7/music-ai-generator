@@ -131,7 +131,7 @@ O treinamento foi conduzido com a biblioteca PyTorch, otimizador AdamW (learning
 
 Foram utilizadas técnicas de *Automatic Mixed Precision* (AMP) para reduzir o uso de VRAM em cerca de 40% e acelerar a iteração em aproximadamente 2x. Como aumento de dados, aplicou-se transposição aleatória dos pitches em [0, +4, +8] semitons, excluindo a track de bateria.
 
-O modelo foi treinado por 74 épocas com batch size de 8 e sequências de 512 tokens com sobreposição de 50%. A função de loss de validação foi monitorada para detecção precoce de overfitting; um diagnóstico automático a cada 5 épocas detecta colapso de modo (geração restrita a poucos pitches únicos) e dispara alertas.
+O modelo foi treinado por 74 épocas com batch size de 8 e sequências de 512 tokens com sobreposição de 50%. A função de loss de validação foi monitorada para detecção precoce de overfitting; um diagnóstico automático a cada 5 épocas detecta colapso de modo (geração restrita a poucos pitches únicos) e dispara alertas. A loss de validação convergiu a 2,3988 na época 74, ponto a partir do qual checkpoints subsequentes apresentaram tendência ao colapso de modo (geração restrita a díades fixas após platô prolongado em learning rate baixo). Esse comportamento foi confirmado por inspeção auditiva e visual dos piano rolls das amostras geradas em épocas posteriores (89, 99, 109), justificando a decisão de congelar o modelo na época 74 como checkpoint final.
 
 ### 4.5. Pipeline de Geração
 
@@ -198,13 +198,17 @@ A interpretação dos resultados exige cautela. O Markov apresenta maior diversi
 
 O Transformer, em contraste, apresenta menor pitch_diversity por força do pipeline `--solid_base`, que repete um conjunto de quatro acordes (com aproximadamente 12 pitches únicos) ao longo da peça. Esta repetição é estrutural e intencional — é o que dá ao ouvinte a sensação de progressão harmônica coerente.
 
-A métrica em que o Transformer claramente supera o Markov é **ioi_std**, indicando que sua saída tem ritmo significativamente mais regular e previsível. Markov produz inter-onsets caóticos, característicos de geração sem coordenação métrica.
+A métrica em que o Transformer claramente supera o Markov é **ioi_std**, indicando que sua saída tem ritmo significativamente mais regular e previsível. Markov produz inter-onsets caóticos, característicos de geração sem coordenação métrica. Como observado na Figura 1, há um gap claro e sem sobreposição entre as duas distribuições nesta métrica: todas as quatro amostras Transformer ficam abaixo de 0,22 segundos, enquanto todas as quatro amostras Markov superam 0,24 segundos. A consistência intra-modelo observada (baixa dispersão entre amostras do mesmo modelo) também indica que o comportamento é sistemático e não fruto de aleatoriedade da amostragem.
+
+![Figura 1. Métricas quantitativas por amostra — Transformer (azul) vs Markov (vermelho). Linhas pontilhadas indicam médias por modelo. Os identificadores A, E, G, H correspondem a amostras Transformer; B, C, D, F a amostras Markov.](figura_metricas.png)
 
 ### 5.2. Análise Qualitativa
 
-Inspeção visual dos *piano rolls* revela diferenças marcantes. Amostras do Transformer apresentam três camadas visualmente distintas: solo em registro alto com fraseado claro, acordes regulares no registro médio formando o backbone harmônico, e linhas de walking bass no registro grave. Amostras Markov, em contraste, mostram dispersão homogênea de pitches sem agrupamento funcional.
+Inspeção visual dos *piano rolls* revela diferenças marcantes entre os modelos. Amostras do Transformer apresentam quatro camadas visualmente distintas e funcionalmente coordenadas: solo melódico em registro alto, acordes regulares no registro médio formando o backbone harmônico, walking bass no registro grave e padrão de bateria contínuo na faixa de percussão. Amostras Markov, em contraste, mostram dispersão homogênea de pitches concentrada predominantemente em um único registro (médio-alto), sem agrupamento funcional, sem fundação rítmica e sem qualquer separação clara de papéis musicais.
 
-*(Inserir aqui Figura 1 — comparação lado-a-lado de piano rolls)*
+A Figura 2 ilustra essa diferença comparando amostras representativas de cada modelo. As tracks coloridas representam papéis funcionais inferidos pelo registro de pitch: solo (verde), base harmônica (azul), baixo (roxo) e bateria (rosa). Nas amostras do Transformer (esquerda) observam-se as quatro camadas operando em paralelo de forma coordenada; nas amostras do Markov (direita), apenas uma ou duas faixas estão ativas, sem alinhamento métrico.
+
+![Figura 2. Comparação visual de piano rolls — Transformer (esquerda, tonalidades Em e Am) vs Markov (direita). Cores indicam papel funcional inferido pelo registro de pitch: verde = solo, azul = base, roxo = baixo, rosa = bateria.](figura_comparacao.png)
 
 A análise auditiva confirma a inspeção visual: amostras do Transformer são percebidas como composições estruturadas, com sensação de início-desenvolvimento-fim, enquanto Markov é caracterizado por avaliadores informais como "música aleatória" ou "improvisação caótica".
 
