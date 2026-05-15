@@ -26,10 +26,10 @@ import sys
 # 4 amostras Transformer × 4 amostras Markov pra MOS robusto sem fatigar avaliadores
 # Tons variados pra cobrir maior/menor e diferentes "humores"
 TRANSFORMER_CONFIGS = [
-    {'name': 'transformer_C',  'key': 'C',  'tempo': 100, 'temp': 0.9},
-    {'name': 'transformer_G',  'key': 'G',  'tempo': 95,  'temp': 0.95},
-    {'name': 'transformer_Am', 'key': 'Am', 'tempo': 90,  'temp': 0.95},
-    {'name': 'transformer_Em', 'key': 'Em', 'tempo': 95,  'temp': 0.9},
+    {'name': 'transformer_C',  'key': 'C',  'tempo': 100, 'temp': 0.9,  'drum_seed': 11},
+    {'name': 'transformer_G',  'key': 'G',  'tempo': 95,  'temp': 0.95, 'drum_seed': 23},
+    {'name': 'transformer_Am', 'key': 'Am', 'tempo': 90,  'temp': 0.95, 'drum_seed': 37},
+    {'name': 'transformer_Em', 'key': 'Em', 'tempo': 95,  'temp': 0.9,  'drum_seed': 53},
 ]
 
 MARKOV_CONFIGS = [
@@ -41,7 +41,8 @@ MARKOV_CONFIGS = [
 
 
 def run_transformer(checkpoint: str, output: str, config: dict) -> bool:
-    """Roda generate.py com modo trio + solid_base + bateria (banda completa)."""
+    """Roda generate.py com modo trio + solid_base + bateria (banda completa).
+    drum_seed varia por amostra pra evitar baterias bit-a-bit idênticas no MOS."""
     cmd = [
         sys.executable, 'generate.py',
         '--checkpoint', checkpoint,
@@ -53,6 +54,7 @@ def run_transformer(checkpoint: str, output: str, config: dict) -> bool:
         '--render_as_trio',
         '--solid_base',
         '--add_drums',
+        '--drum_seed', str(config.get('drum_seed', 42)),
     ]
     print(f"  $ {' '.join(cmd)}")
     result = subprocess.run(cmd, capture_output=True, text=True)
@@ -63,9 +65,9 @@ def run_transformer(checkpoint: str, output: str, config: dict) -> bool:
 
 
 def run_markov(dataset: str, output: str, config: dict, duration: float = 60.0) -> bool:
-    """Roda markov_baseline.py."""
+    """Roda markov_baseline.py (em evaluation/)."""
     cmd = [
-        sys.executable, 'markov_baseline.py',
+        sys.executable, 'evaluation/markov_baseline.py',
         '--dataset', dataset,
         '--output', output,
         '--tempo', str(config['tempo']),

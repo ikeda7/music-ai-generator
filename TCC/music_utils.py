@@ -459,6 +459,7 @@ def tokens_to_midi(tokens: List[int], tokenizer: MIDITokenizer,
                    render_as_trio: bool = False,
                    solid_base: bool = False,
                    add_drums: bool = False,
+                   drum_seed: int = 42,
                    key_root: int = None,
                    key_mode: str = 'major') -> bool:
     """
@@ -534,9 +535,11 @@ def tokens_to_midi(tokens: List[int], tokenizer: MIDITokenizer,
 
         # Modo --add_drums: injeta padrão rock/pop algorítmico em canal 9 GM.
         # Compatível com qualquer modo de render — só adiciona um slot novo (200).
+        # drum_seed permite que cada peça tenha variações de velocity únicas
+        # (humanização) mesmo mantendo o padrão estrutural igual.
         if add_drums:
             instrument_tracks[_DRUM_SLOT] = _generate_drum_pattern(
-                total_duration=current_time, tempo=tempo,
+                total_duration=current_time, tempo=tempo, seed=drum_seed,
             )
 
         # Fecha notas abertas sem NOTE_OFF correspondente (cap em max_note_duration)

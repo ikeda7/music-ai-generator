@@ -5,7 +5,26 @@
       "Bash(find /h -maxdepth 3 -type d -name TCC)",
       "Bash(wc -l \"/h/Meu Drive/TCC/TCC\"/*.py)",
       "mcp__plugin_context-mode_context-mode__ctx_doctor",
-      "Bash(dir \"h:\\\\Meu Drive\\\\TCC\\\\\" /b)"
+      "Bash(dir \"h:\\\\Meu Drive\\\\TCC\\\\\" /b)",
+      "Bash(gh pr *)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git reset *)",
+      "Bash(git commit -m 'Reverte decoder para slot-based \\(referência teste_ep74\\) *)",
+      "Bash(git commit *)",
+      "Bash(cd \"h:/Meu Drive/TCC/TCC/samples\" && mkdir -p archive && mv trio_*.* solid_*.* v3_*.* v4_*.* archive/ 2>/dev/null && ls)",
+      "Bash(cd \"h:/Meu Drive/TCC/TCC\" && mkdir -p tools evaluation article && rm -f \"~\\\\$artigo.docx\" figura_treino.png && rm -rf __pycache__ && echo \"limpeza ok\")",
+      "Bash(git mv *)",
+      "Bash(mv figura_metricas.png article/)",
+      "Bash(mv figura_comparacao.png article/)",
+      "Bash(mv artigo.docx article/)",
+      "Bash(mv artigo.pdf article/)",
+      "Bash(mv Artigo-MarcoMello_revisadoDaniloEler.pdf article/)",
+      "Bash(ls *.docx *.pdf)",
+      "Bash(ls article/Artigo*)"
+    ],
+    "additionalDirectories": [
+      "h:\\Meu Drive\\TCC"
     ]
   }
 }

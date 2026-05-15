@@ -219,7 +219,11 @@ A análise auditiva confirma a inspeção visual: amostras do Transformer são p
 
 ### 5.3. Avaliação Subjetiva (MOS) — em andamento
 
-A avaliação subjetiva via *Mean Opinion Score* (MOS) está em fase de coleta. Oito amostras (quatro Transformer + quatro Markov) foram geradas, anonimizadas com códigos `sample_A` a `sample_H` e padronizadas em duração de 60 segundos. O formulário avalia quatro critérios em escala Likert de 1 a 5: naturalidade, coerência rítmica, qualidade harmônica e agradabilidade. Resultados completos serão apresentados na defesa final.
+A avaliação subjetiva via *Mean Opinion Score* (MOS) está em fase de coleta. Oito amostras (quatro Transformer + quatro Markov) foram geradas, anonimizadas com códigos `sample_A` a `sample_H` e padronizadas em duração de 60 segundos. As quatro amostras do Transformer cobrem diferentes tonalidades (C maior, G maior, A menor, E menor) e diferentes tempos (90 a 100 BPM), com sementes distintas para a humanização rítmica da bateria, evitando que avaliadores agrupem amostras pela percepção de um padrão percussivo idêntico. O formulário avalia quatro critérios em escala Likert de 1 a 5: naturalidade, coerência rítmica, qualidade harmônica e agradabilidade. Resultados completos serão apresentados na defesa final.
+
+#### 5.3.1. Consideração metodológica
+
+É importante explicitar uma assimetria deliberada do protocolo experimental: o Transformer foi avaliado em condição com tonalidade fixa (informada via `--key`), enquanto o baseline Markov opera sem qualquer restrição harmônica, dado que a cadeia de transições não possui o conceito de tonalidade. Esta diferença reflete fielmente o que cada método é capaz de fazer — não se trata de "ajudar" o Transformer com um recurso indisponível ao baseline, mas sim de comparar o melhor que cada abordagem oferece. Cadeias de Markov são, por construção, agnósticas a estruturas globais como tonalidade, ao passo que o sistema proposto incorpora *Constrained Decoding* tonal como contribuição metodológica. Caracterizar essa assimetria como problema seria equivalente a comparar dois carros e exigir que um deles também não tenha câmbio automático.
 
 ## 6. Conclusão e Trabalhos Futuros
 

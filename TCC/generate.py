@@ -504,6 +504,11 @@ def main():
                        help='Injeta padrão de bateria rock/pop 4/4 algorítmico '
                             '(kick 1&3, snare 2&4, hihat 8x). Compatível com '
                             'qualquer modo de render. Pitches GM padrão no canal 9.')
+    parser.add_argument('--drum_seed', type=int, default=42,
+                       help='Seed pro padrão de bateria. Mantém estrutura igual '
+                            'mas varia velocity por nota (humanização). Use seeds '
+                            'diferentes em amostras distintas pra evitar baterias '
+                            'bit-a-bit idênticas. Default: 42.')
 
     args = parser.parse_args()
     
@@ -598,6 +603,7 @@ def main():
             max_note_duration=args.max_note_duration,
             solid_base=args.solid_base,
             add_drums=args.add_drums,
+            drum_seed=args.drum_seed,
             key_root=solid_base_root,
             key_mode=solid_base_mode,
         )
