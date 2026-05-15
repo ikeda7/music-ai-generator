@@ -1,346 +1,231 @@
-# Sistema de Geração de Música com IA - Transformer Multi-Instrumental
+# Sistema de Geração de Música com IA — Transformer + Constrained Decoding
 
-Sistema completo de geração de música usando arquitetura Transformer, capaz de processar e gerar composições multi-instrumentais a partir de arquivos MIDI.
+Sistema de geração de música multi-instrumental simbólica (formato MIDI) baseado em arquitetura Transformer combinada com técnicas de *Constrained Decoding* e pós-processamento algorítmico inspirado em teoria musical. TCC desenvolvido por Lucas Vinícius de Carvalho Ikeda sob orientação do Prof. Dr. Danillo Roberto Pereira — UNESP.
 
-## 🚀 Início Rápido
+## Início Rápido
 
 ```bash
 # 1. Instalar dependências
 pip install -r requirements.txt
 
 # 2. Baixar datasets (MAESTRO, Groove, POP909)
-python download_datasets.py --all
+python tools/download_datasets.py --all
 
-# 3. Treinar o modelo (use todos os datasets para melhor qualidade)
-python train.py --data_path ./datasets
+# 3. Treinar (ou usar o checkpoint pronto, ep74)
+python train.py --data_path ./datasets/maestro ./datasets/pop909 ./datasets/groove
 
-# 4. Gerar música
-python generate.py --checkpoint checkpoints/checkpoint_epoch_50.pt --output minha_musica.mid
+# 4. Gerar música no modo canônico (banda híbrida — trio piano + bateria)
+python generate.py \
+  --checkpoint checkpoints/checkpoint_epoch_74.pt \
+  --output minha_musica.mid \
+  --key C --tempo 100 --temperature 0.9 --top_k 40 \
+  --render_as_trio --solid_base --add_drums
+
+# 5. Visualizar piano roll colorido por papel funcional
+python show_midi.py minha_musica.mid
 ```
-
-**💡 Dica:** Para gerar música de **qualidade profissional**, use múltiplos datasets e treine por muitas épocas (100+).
-
-## Características
-
-- **Arquitetura Transformer**: Baseado em `nn.TransformerEncoder` do PyTorch
-- **Multi-Instrumental**: Suporta 5 instrumentos simultâneos (Piano, Melodia, Baixo, Bateria, Harmonia)
-- **Processamento MIDI**: Pipeline robusto para pré-processar arquivos MIDI
-- **Tokenização REMI-like**: Representação eficiente de eventos musicais
-- **Geração Autoregressiva**: Gera música usando sampling com temperatura
 
 ## Estrutura do Projeto
 
 ```
 TCC/
-├── data_processor.py      # Processamento e tokenização de MIDI
-├── model.py               # Arquitetura Transformer multi-instrumental
-├── music_utils.py         # Utilitários musicais e conversão MIDI
-├── train.py               # Script de treinamento
-├── generate.py            # Script de geração/inferência
-├── config.json            # Hiperparâmetros
-├── requirements.txt       # Dependências
-└── README.md             # Este arquivo
+├── data_processor.py       # Tokenização REMI-like, dataset, cache
+├── model.py                # MultiInstrumentTransformer (decoder-only)
+├── train.py                # Loop de treinamento (AMP, AdamW, label smoothing)
+├── generate.py             # Geração com Constrained Decoding
+├── music_utils.py          # tokens → MIDI, modos trio/band/solid_base/drums
+├── diagnostico.py          # Detecção de mode collapse
+├── show_midi.py            # Piano roll PNG colorido (Solo/Base/Baixo/Bateria)
+├── config.json             # Hiperparâmetros
+│
+├── tools/                  # Utilitários auxiliares
+│   ├── download_datasets.py
+│   └── trim_eval_samples.py
+│
+├── evaluation/             # Baseline, métricas, MOS, plotagem
+│   ├── markov_baseline.py
+│   ├── metrics.py
+│   ├── make_eval_set.py
+│   ├── analyze_mos.py
+│   ├── plot_comparison_rolls.py
+│   ├── plot_metrics_comparison.py
+│   └── plot_training_curves.py
+│
+└── article/                # Artigo + figuras
+    ├── ARTIGO_TCC.md
+    ├── MOS_GUIDE.md
+    ├── figura_metricas.png
+    └── figura_comparacao.png
 ```
+
+Datasets, checkpoints e samples não são versionados (estão no `.gitignore`).
+
+## Modos de Geração
+
+| Modo | Flag | Quando usar |
+|------|------|-------------|
+| Piano solo single-track | (default) | Output cru do modelo, debug |
+| Trio piano | `--render_as_trio` | 3 tracks de piano (solo/base/baixo) com filtros funcionais |
+| **Trio + base sintética** | `--render_as_trio --solid_base --key X` | **Modo canônico** — banda híbrida ML+algorítmica |
+| Banda GM | `--render_as_band` | Demo com timbres GM distintos (qualidade limitada) |
+| **+ Bateria** | `--add_drums` | Combinável com qualquer modo — padrão rock/pop 4/4 no canal 9 |
 
 ## Instalação
 
-### 1. Requisitos
+### Requisitos
 
-- Python 3.8 ou superior
-- PyTorch (veja [instalação oficial](https://pytorch.org/))
-- ~10-20 GB de espaço em disco para datasets
-- GPU recomendada (mas funciona em CPU também)
+- Python 3.8+
+- PyTorch + CUDA (recomendado para treino — funciona em CPU para geração)
+- ~20 GB de espaço para datasets
 
-### 2. Instalar Dependências
+### Dependências
 
 ```bash
 pip install -r requirements.txt
 ```
 
-Ou instale manualmente:
+### Datasets
 
 ```bash
-pip install torch mido pretty_midi numpy pandas tqdm matplotlib scipy
+python tools/download_datasets.py --all
+# Ou específicos:
+python tools/download_datasets.py --maestro
+python tools/download_datasets.py --pop909
+python tools/download_datasets.py --groove
 ```
 
-### 3. Baixar Datasets
+| Dataset | Tamanho | Uso |
+|---------|---------|-----|
+| MAESTRO v3.0.0 | ~200h piano | Voz principal (modelo aprende) |
+| POP909 | 2.897 arquivos | Estrutura multi-track |
+| Groove MIDI | 1.150 padrões | Bateria humana (reservado p/ trabalho futuro) |
 
-Para treinar um modelo de qualidade, você precisa de datasets MIDI. Execute o script de download:
-
-```bash
-# Baixar todos os datasets disponíveis
-python download_datasets.py --all
-
-# Ou baixar datasets específicos
-python download_datasets.py --maestro
-python download_datasets.py --groove
-python download_datasets.py --pop909
-
-# Especificar diretório de destino
-python download_datasets.py --all --datasets_dir ./meus_datasets
-```
-
-**Datasets disponíveis:**
-- **MAESTRO**: ~200 horas de performances de piano (recomendado)
-- **Groove**: Padrões de bateria MIDI de alta qualidade
-- **POP909**: 909 músicas pop com múltiplos tracks (melodia, piano, baixo)
-- **Lakh MIDI**: Dataset gigante (~170k músicas) - requer download manual
-
-**Nota:** Alguns downloads podem falhar automaticamente. Nesse caso, o script fornecerá links e instruções para download manual.
-
-## Uso Rápido
-
-### Passo a Passo Completo
-
-1. **Instalar dependências:**
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-2. **Baixar datasets:**
-   ```bash
-   python download_datasets.py --all
-   ```
-
-3. **Treinar o modelo:**
-   ```bash
-   python train.py --data_path ./datasets
-   ```
-
-4. **Gerar música:**
-   ```bash
-   python generate.py --checkpoint checkpoints/checkpoint_epoch_50.pt --output minha_musica.mid
-   ```
-
-### Treinamento
-
-Para treinar o modelo com um dataset MIDI:
+## Treinamento
 
 ```bash
-python train.py --data_path /caminho/para/dataset/midi
+python train.py --data_path ./datasets/maestro ./datasets/pop909 ./datasets/groove
 ```
 
 **Parâmetros:**
-- `--data_path`: Caminho para diretório ou arquivo MIDI (obrigatório)
-- `--config`: Caminho para arquivo de configuração (padrão: `config.json`)
-- `--resume`: Caminho para checkpoint para continuar treinamento (opcional)
-- `--device`: Device para treinamento: `auto`, `cpu`, ou `cuda` (padrão: `auto`)
+- `--data_path`: um ou mais diretórios MIDI (obrigatório)
+- `--resume`: checkpoint `.pt` para continuar
+- `--reset_best_loss`: ignorar `best_val_loss` do checkpoint (use ao mudar função de perda)
+- `--device`: `auto`, `cpu` ou `cuda`
 
-**Exemplos:**
-```bash
-# Treinar com todos os datasets baixados (RECOMENDADO para melhor qualidade)
-python train.py --data_path ./datasets
+O treino salva checkpoints em `checkpoints/checkpoint_epoch_X.pt` quando a loss de validação melhora. Diagnóstico automático a cada 5 épocas detecta mode collapse.
 
-# Treinar apenas com MAESTRO
-python train.py --data_path ./datasets/maestro
+**Decisão deste TCC:** o modelo foi congelado em **ep74** (val_loss 2,3988). Checkpoints posteriores (89, 99, 109) apresentaram tendência ao colapso e foram descartados.
 
-# Continuar treinamento a partir de checkpoint
-python train.py --data_path ./datasets --resume checkpoints/checkpoint_epoch_50.pt
-
-# Treinar em GPU específica
-python train.py --data_path ./datasets --device cuda
-```
-
-### Geração
-
-Para gerar música usando um modelo treinado:
+## Geração — exemplos completos
 
 ```bash
-python generate.py --checkpoint checkpoints/checkpoint_epoch_50.pt --output minha_musica.mid
+# Banda completa em menor (modo recomendado para apresentação)
+python generate.py --checkpoint checkpoints/checkpoint_epoch_74.pt \
+  --output banda_Am.mid --key Am --tempo 95 --temperature 0.95 --top_k 50 \
+  --render_as_trio --solid_base --add_drums
+
+# Apenas trio sem fundação algorítmica (modelo puro)
+python generate.py --checkpoint checkpoints/checkpoint_epoch_74.pt \
+  --output trio_puro.mid --key C --tempo 100 --render_as_trio
+
+# Múltiplas amostras
+python generate.py --checkpoint checkpoints/checkpoint_epoch_74.pt \
+  --output musica.mid --num_generations 5 --auto_key
 ```
 
-**Parâmetros:**
-- `--checkpoint`: Caminho para checkpoint do modelo (obrigatório)
-- `--output`: Caminho para salvar o arquivo MIDI gerado (padrão: `generated_music.mid`)
-- `--config`: Caminho para arquivo de configuração (padrão: `config.json`)
-- `--length`: Comprimento máximo da geração em tokens (padrão: do config)
-- `--temperature`: Temperatura para sampling (padrão: do config)
-- `--top_k`: Top-k sampling (padrão: do config)
-- `--top_p`: Top-p (nucleus) sampling (padrão: do config)
-- `--priming`: Arquivo MIDI para usar como priming/condicionamento inicial (opcional)
-- `--num_generations`: Número de músicas para gerar (padrão: 1)
-- `--device`: Device para geração: `auto`, `cpu`, ou `cuda` (padrão: `auto`)
+**Parâmetros principais:**
+- `--checkpoint`: caminho do `.pt` (obrigatório)
+- `--output`: arquivo `.mid` de saída
+- `--key`: tonalidade (`C`, `G`, `Am`, etc.) — habilita chord backbone e solid_base
+- `--auto_key`: detecção automática via Krumhansl-Schmuckler
+- `--temperature` / `--top_k` / `--top_p`: parâmetros de sampling
+- `--tempo`: BPM de renderização (default 100)
+- `--num_generations`: gerar múltiplas peças
 
-**Exemplos:**
-```bash
-# Geração básica
-python generate.py --checkpoint checkpoints/checkpoint_epoch_50.pt
-
-# Geração com temperatura mais alta (mais criativa)
-python generate.py --checkpoint checkpoints/checkpoint_epoch_50.pt --temperature 1.2
-
-# Geração com priming (condicionamento inicial)
-python generate.py --checkpoint checkpoints/checkpoint_epoch_50.pt --priming referencia.mid
-
-# Gerar múltiplas músicas
-python generate.py --checkpoint checkpoints/checkpoint_epoch_50.pt --num_generations 5
-```
-
-## Configuração
-
-O arquivo `config.json` contém todos os hiperparâmetros configuráveis:
-
-### Modelo
-- `d_model`: Dimensão do modelo (padrão: 512)
-- `nhead`: Número de heads de atenção (padrão: 8)
-- `num_layers`: Número de camadas do encoder (padrão: 6)
-- `dim_feedforward`: Dimensão da camada feedforward (padrão: 2048)
-- `dropout`: Taxa de dropout (padrão: 0.1)
-
-### Dados
-- `seq_length`: Comprimento das sequências de treinamento (padrão: 512)
-- `num_instruments`: Número de instrumentos (padrão: 5)
-- `quantization_resolution`: Resolução de quantização temporal (padrão: 16)
-
-### Treinamento
-- `batch_size`: Tamanho do batch (padrão: 8)
-- `learning_rate`: Taxa de aprendizado (padrão: 0.0001)
-- `num_epochs`: Número de épocas (padrão: 100)
-- `save_every`: Salvar checkpoint a cada N épocas (padrão: 10)
-- `eval_every`: Avaliar a cada N épocas (padrão: 5)
-
-### Geração
-- `temperature`: Temperatura para sampling (padrão: 1.0)
-- `max_length`: Comprimento máximo da geração (padrão: 1024)
-- `top_k`: Top-k sampling (padrão: 50)
-- `top_p`: Nucleus sampling (padrão: 0.95)
-
-## Formatos de Dados
-
-### Datasets Suportados
-
-O sistema suporta qualquer dataset MIDI, incluindo:
-- **MAESTRO**: Dataset de performances de piano (~200 horas)
-- **Groove**: Dataset de bateria MIDI de alta qualidade
-- **POP909**: 909 músicas pop com múltiplos tracks
-- **Lakh MIDI**: Dataset extenso (~170k músicas)
-- Qualquer coleção de arquivos `.mid` ou `.midi`
-
-### Preparação de Dados
-
-Após baixar os datasets, eles estarão organizados assim:
-
-```
-datasets/
-├── maestro/
-│   ├── arquivo1.mid
-│   ├── arquivo2.mid
-│   └── ...
-├── groove/
-│   ├── arquivo1.mid
-│   └── ...
-└── pop909/
-    ├── arquivo1.mid
-    └── ...
-```
-
-O sistema processará automaticamente todos os arquivos MIDI encontrados.
-
-### Treinamento com Múltiplos Datasets
-
-Para obter melhor qualidade, treine com todos os datasets:
+## Avaliação
 
 ```bash
-# Treinar com todos os datasets no diretório
-python train.py --data_path ./datasets
+# Métricas quantitativas (CSV)
+python evaluation/metrics.py --input ./eval_samples --output metricas.csv
 
-# Ou especificar múltiplos diretórios (um por vez)
-python train.py --data_path ./datasets/maestro
-python train.py --data_path ./datasets/groove --resume checkpoints/checkpoint_epoch_50.pt
+# Gera conjunto de avaliação MOS (4 Transformer + 4 Markov, ordem randomizada)
+python evaluation/make_eval_set.py --output_dir ./eval_samples
+
+# Padroniza duração para comparação justa
+python tools/trim_eval_samples.py --input_dir ./eval_samples --duration 60
+
+# Baseline trivial pra comparação acadêmica
+python evaluation/markov_baseline.py --dataset ./datasets/maestro --output markov.mid
+
+# Análise das respostas do Google Forms
+python evaluation/analyze_mos.py --responses respostas.csv --legend eval_samples/legend.json
 ```
 
-**Dica:** Para treinamento extensivo, combine múltiplos datasets. Quanto mais dados de qualidade, melhor será a música gerada!
+Veja `article/MOS_GUIDE.md` para o guia operacional completo do estudo subjetivo.
 
-## Arquitetura
+## Arquitetura Técnica
 
-### Modelo Transformer
+### Modelo (`MultiInstrumentTransformer`)
 
-O modelo utiliza uma arquitetura baseada em `nn.TransformerEncoder`:
-- **Embedding de Tokens**: Converte tokens em vetores de dimensão `d_model`
-- **Encoding Posicional**: Adiciona informação temporal
-- **Multi-Head Attention**: Captura dependências de longo prazo
-- **Feedforward Layers**: Processa representações
-- **Head de Saída**: Gera distribuição sobre vocabulário
+- Decoder-only Transformer (causal mask) sobre `nn.TransformerEncoder`
+- d_model=256, nhead=4, num_layers=4, dim_feedforward=1024
+- ~3,2M parâmetros — cabe em 8 GB VRAM
+- Weight tying entre embedding e projeção de saída
 
 ### Tokenização
 
-O sistema usa uma abordagem REMI-like:
-- **Tokens Especiais**: PAD, BOS, EOS, MASK
-- **Tokens de Instrumento**: Identificam qual instrumento está tocando
-- **Tokens de Pitch**: NOTE_ON e NOTE_OFF para cada nota
-- **Tokens de Velocity**: Intensidade das notas (quantizada)
-- **Tokens de Tempo**: TIME_SHIFT para sincronização temporal
+REMI-like + Bar-Relative Encoding, vocabulário ~349 tokens:
+- `INSTRUMENT_0..4`, `NOTE_ON_21..108`, `NOTE_OFF_21..108`
+- `VELOCITY_0..31`, `TIME_SHIFT_1..128` (steps de 0,0625s)
+- `BAR`, `BEAT_2`, `BEAT_3`, `BEAT_4`
 
-## Dicas de Uso
+### Pipeline de Geração — Constrained Decoding
 
-### Treinamento
-- **Use múltiplos datasets** para melhor qualidade musical
-- Comece com datasets pequenos para testar o pipeline rapidamente
-- Para qualidade máxima, use MAESTRO + POP909 + Groove (ou mais)
-- Ajuste `batch_size` no `config.json` de acordo com a memória disponível
-- Use `gradient_clip` para estabilizar o treinamento
-- Monitore o loss de validação para evitar overfitting
-- **Treine por muitas épocas** (100+) para resultados de qualidade profissional
-- Quanto mais dados de treinamento, melhor a qualidade final
+A geração não é amostragem pura — o Transformer produz logits e uma função de restrição (`vocab_constraint_fn`) os modifica antes da amostragem:
 
-### Geração
-- **Temperatura baixa (0.5-0.8)**: Gera música mais conservadora e previsível
-- **Temperatura média (1.0-1.2)**: Equilíbrio entre criatividade e coerência
-- **Temperatura alta (1.5-2.0)**: Gera música mais variada e criativa
-- Use `priming` para condicionar a geração com um início específico
-- Experimente `top_k` e `top_p` para controlar a diversidade
+1. **Restrição gramatical** — VELOCITY só após NOTE_ON
+2. **Slot único** — força INSTRUMENT_0; vozes emergem dos registros
+3. **Voice leading** — penaliza saltos grandes por registro
+4. **Repetition penalty soft** — desconto –1,0 em tokens recentes
+5. **Bloqueio de EOS** — primeiros 300 tokens
+6. **Chord backbone** — bônus para pitches consonantes (opt-in via `--key`)
+7. **Re-entry bias dinâmico** — bônus positivo crescente em registros silentes (> 60 tokens)
+
+Após a amostragem, as notas são separadas em tracks por registro de pitch e cada uma recebe filtros funcionais (monofonia no solo/baixo, quantização a 1/8 de tempo, cap de duração 1,2s).
+
+## Artigo Acadêmico
+
+O artigo do TCC está em `article/ARTIGO_TCC.md` (estrutura SBC). Inclui:
+- Fundamentação teórica (Transformer, REMI, MIDI, sampling)
+- Trabalhos relacionados (Music Transformer, MuseGAN, Pop MT, Markov)
+- Metodologia completa
+- Métricas quantitativas (Tabela 1, Figura 1)
+- Análise qualitativa (Figura 2)
+- Conclusão e trabalhos futuros
+
+Para compilar em PDF/DOCX via pandoc:
+```bash
+pandoc article/ARTIGO_TCC.md -o article/artigo.pdf
+```
 
 ## Troubleshooting
 
-### Erro: "Nenhum arquivo MIDI encontrado"
-- Verifique se o caminho do dataset está correto
-- Certifique-se de que os arquivos têm extensão `.mid` ou `.midi`
+**CUDA out of memory:** reduza `batch_size` em `config.json` ou rode com `--device cpu`.
 
-### Erro: "CUDA out of memory"
-- Reduza `batch_size` no `config.json`
-- Reduza `seq_length` no `config.json`
-- Use `--device cpu` para treinar em CPU
+**"Nenhum arquivo MIDI encontrado":** verifique se o `--data_path` aponta para diretório com `.mid`/`.midi`.
 
-### Geração muito lenta
-- Use GPU para geração: `--device cuda`
-- Reduza `max_length` no `config.json` ou `--length`
+**Mode collapse durante o treino:** o diagnóstico automático detecta e avisa. Se ocorrer, retome de um checkpoint anterior e considere reduzir LR ou aumentar `label_smoothing`.
 
-### Música gerada não soa bem
-- Verifique se o modelo foi treinado por épocas suficientes
-- Experimente diferentes valores de `temperature`
-- Tente usar `priming` com uma música de referência
-
-## Estrutura de Checkpoints
-
-Os checkpoints salvos contêm:
-- Estado do modelo (`model_state_dict`)
-- Estado do optimizer (`optimizer_state_dict`)
-- Época atual (`epoch`)
-- Loss atual (`loss`)
-- Configurações (`config`)
-- Vocabulário (`vocab`)
-
-## Desenvolvimento
-
-### Módulos Principais
-
-- **data_processor.py**: `MIDIProcessor` e `MIDITokenizer`
-- **model.py**: `MultiInstrumentTransformer`
-- **music_utils.py**: Funções de conversão e análise
-- **train.py**: Loop de treinamento completo
-- **generate.py**: Geração autoregressiva
+**Geração sem som de banda:** verifique se está usando `--render_as_trio` e/ou `--render_as_band`. Modo default é piano solo single-track.
 
 ## Licença
 
-Este projeto é parte de um trabalho de TCC (Trabalho de Conclusão de Curso).
+Trabalho acadêmico de TCC. Datasets utilizados mantêm suas licenças originais (MAESTRO, POP909, Groove são CC).
 
 ## Referências
 
-- Arquitetura Transformer: "Attention Is All You Need" (Vaswani et al., 2017)
-- Tokenização REMI: "Pop Music Transformer" (Huang & Yang, 2020)
-- Processamento MIDI: Biblioteca `mido` e `pretty_midi`
-
-## Contato
-
-Para dúvidas ou problemas, consulte a documentação do código ou entre em contato com o autor do projeto.
-
+- Vaswani et al. (2017). Attention is all you need. *NeurIPS*.
+- Huang et al. (2018). Music Transformer. *arXiv:1809.04281*.
+- Huang & Yang (2020). Pop Music Transformer. *ACM MM*.
+- Hawthorne et al. (2019). MAESTRO dataset. *ICLR*.
+- Holtzman et al. (2020). Neural text degeneration. *ICLR*.
