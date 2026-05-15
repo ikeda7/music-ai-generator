@@ -38,7 +38,7 @@ O objetivo central é desenvolver um pipeline cuja saída em formato `.mid` seja
 
 ### 2.1. Arquitetura Transformer
 
-A arquitetura *Transformer*, introduzida por Vaswani et al. (2017), representa um marco no aprendizado profundo aplicado a dados sequenciais. Diferentemente de modelos recorrentes como LSTM e GRU, o Transformer utiliza exclusivamente o mecanismo de *self-attention*, que permite processar todas as posições da sequência em paralelo e capturar dependências de longo alcance sem o gargalo da propagação temporal.
+A arquitetura *Transformer*, introduzida por Vaswani et al. (2017), representa um marco no aprendizado profundo aplicado a dados sequenciais. Diferentemente de modelos recorrentes como LSTM [Hochreiter and Schmidhuber 1997] e GRU, o Transformer utiliza exclusivamente o mecanismo de *self-attention*, que permite processar todas as posições da sequência em paralelo e capturar dependências de longo alcance sem o gargalo da propagação temporal.
 
 O componente fundamental do Transformer é a *multi-head attention*, definida como:
 
@@ -46,7 +46,7 @@ $$\text{Attention}(Q, K, V) = \text{softmax}\left(\frac{QK^T}{\sqrt{d_k}}\right)
 
 onde Q (queries), K (keys) e V (values) são projeções lineares das embeddings de entrada, e $d_k$ é a dimensão das chaves. A operação calcula pesos de atenção entre todas as posições da sequência, permitindo que cada token atualize sua representação com base em informações distribuídas pelo restante do contexto. [Vaswani et al. 2017]
 
-Em arquiteturas *decoder-only* — utilizadas em modelos generativos como o GPT — aplica-se uma máscara causal para garantir que cada posição atenda apenas a tokens anteriores, preservando a propriedade autoregressiva necessária para geração sequencial.
+Em arquiteturas *decoder-only* — utilizadas em modelos generativos como o GPT-2 [Radford et al. 2019] — aplica-se uma máscara causal para garantir que cada posição atenda apenas a tokens anteriores, preservando a propriedade autoregressiva necessária para geração sequencial.
 
 ### 2.2. Tokenização REMI e Bar-Relative Encoding
 
@@ -80,7 +80,15 @@ O MuseGAN propôs uma abordagem baseada em GANs para gerar música multi-track. 
 
 O Pop Music Transformer estendeu o trabalho anterior introduzindo a tokenização REMI e o Bar-Relative Encoding, melhorando significativamente a coerência rítmica das sequências geradas. O modelo foi treinado com música pop e produz peças instrumentais com estrutura clara de melodia, acordes e baixo. [Huang and Yang 2020]
 
-### 3.4. Cadeias de Markov em Música
+### 3.4. MusicVAE (Roberts et al. 2018)
+
+O MusicVAE propôs uma arquitetura de *autoencoder variacional hierárquico* para aprender representações latentes de música simbólica em diferentes escalas temporais [Roberts et al. 2018]. Sua principal contribuição foi permitir interpolação suave entre composições e geração condicionada por vetor latente, características inacessíveis a modelos puramente autoregressivos. Embora a abordagem VAE seja conceitualmente distinta da utilizada neste trabalho, MusicVAE estabeleceu padrões importantes para avaliação de coerência de longo prazo em música gerada.
+
+### 3.5. DeepBach (Hadjeres et al. 2017)
+
+O DeepBach desenvolveu um modelo "dirigível" (*steerable*) específico para geração de corais de Bach a quatro vozes [Hadjeres et al. 2017]. Combina redes neurais com amostragem por Gibbs e impõe restrições harmônicas via condicionamento explícito. Este trabalho ilustra o paradigma adotado também em nosso sistema: integração de aprendizado de máquina com restrições derivadas da teoria musical, em vez de confiar exclusivamente em capacidade representacional da rede.
+
+### 3.6. Cadeias de Markov em Música
 
 Modelos baseados em cadeias de Markov representam uma das abordagens mais clássicas e simples para geração algorítmica de música. Uma cadeia de ordem $n$ aprende a distribuição condicional $P(x_t | x_{t-1}, ..., x_{t-n})$ a partir de um corpus, e gera novas sequências por amostragem da distribuição aprendida. Apesar da simplicidade, cadeias de Markov capturam regularidades locais (transições entre pares ou trios de notas) mas falham em manter coerência de longo prazo, estrutura harmônica ou narrativa musical. Neste trabalho utilizamos uma cadeia de ordem 1 como baseline de comparação.
 
@@ -127,7 +135,7 @@ A quantização temporal utiliza resolução de 16 steps por segundo (ticks_per_
 
 ### 4.4. Treinamento
 
-O treinamento foi conduzido com a biblioteca PyTorch, otimizador AdamW (learning rate inicial $1 \times 10^{-4}$, weight decay 0,01), gradient clipping de norma 1,0 e *Cross-Entropy Loss* com *label smoothing* de 0,1. O agendamento de learning rate aplica warmup linear durante 2.000 steps seguido de decaimento cossenoidal até 5% do valor inicial.
+O treinamento foi conduzido com a biblioteca PyTorch, otimizador AdamW [Loshchilov and Hutter 2019] (learning rate inicial $1 \times 10^{-4}$, weight decay 0,01), gradient clipping de norma 1,0 [Goodfellow et al. 2016] e *Cross-Entropy Loss* com *label smoothing* de 0,1. O agendamento de learning rate aplica warmup linear durante 2.000 steps seguido de decaimento cossenoidal até 5% do valor inicial, conforme a abordagem proposta em [Loshchilov and Hutter 2017].
 
 A escolha do valor $\epsilon = 0{,}1$ para o *label smoothing* não foi arbitrária — foi resposta direta a um problema diagnosticado experimentalmente. Em testes preliminares sem suavização, observou-se que o modelo desenvolvia *overconfidence* progressiva sobre tokens "seguros" do vocabulário, em particular sobre o token TIME_SHIFT de menor magnitude. À medida que essa saturação de probabilidade avançava, a amostragem passava a produzir silêncios contínuos (drones) ou repetições de díades fixas após algumas dezenas de tokens — fenômeno conhecido como *mode collapse*. O *label smoothing* atua como regularização redistributiva: ele força o modelo a manter probabilidade residual ($\epsilon / V$, onde $V$ é o tamanho do vocabulário) em todos os outros tokens, evitando que a entropia da distribuição preditiva colapse para zero. O valor 0,1 foi selecionado empiricamente como o menor valor capaz de eliminar o colapso sem prejudicar a precisão preditiva do modelo nos pitches musicalmente relevantes.
 
@@ -146,7 +154,7 @@ A geração no sistema proposto não é uma simples amostragem autoregressiva do
 3. **Voice leading por registro**: NOTE_ON cujo intervalo em relação à última nota do mesmo registro exceder limiar (7 semitons no solo, 12 no baixo/base) recebe penalidade nos logits, favorecendo movimentos por grau conjunto
 4. **Repetition penalty soft**: NOTE_ON e TIME_SHIFT presentes nas últimas 16 posições recebem desconto de –1,0 no logit, reduzindo loops sem zerar a probabilidade
 5. **Bloqueio de EOS** durante os primeiros 300 tokens, evitando peças curtas demais
-6. **Chord backbone**: quando uma tonalidade é fornecida (`--key`), pitches consonantes com a progressão I-V-vi-IV no registro de Base recebem bônus de logit, induzindo o modelo a respeitar a harmonia diatônica sem forçar pitches específicos
+6. **Chord backbone**: quando uma tonalidade é fornecida (`--key`), pitches consonantes com a progressão I-V-vi-IV no registro de Base recebem bônus de logit, induzindo o modelo a respeitar a harmonia diatônica sem forçar pitches específicos. Quando a flag `--auto_key` é utilizada em vez da especificação manual, o sistema infere a tonalidade automaticamente por meio do algoritmo Krumhansl-Schmuckler [Krumhansl and Kessler 1982], que compara o histograma de pitch classes da peça contra perfis tonais empiricamente derivados de estudos de percepção musical
 
 **Estágio 2 — Re-entry bias dinâmico.** Esta foi a contribuição mais delicada do trabalho. O modelo treinado predominantemente em MAESTRO (piano solo) demonstrou tendência a se "fixar" em um único registro de pitch após o início da peça, gerando longas seções monofônicas. Tentativas iniciais de mitigar esse comportamento por meio de *hard constraints* (bloqueio de logits com $-\infty$ ou rotação forçada entre registros) causavam congestionamento sonoro audível — notas brigando pelo mesmo espaço temporal, perda de fluxo melódico, sensação de "metralhadora". A solução adotada foi um **reforço positivo dinâmico**: o sistema rastreia, para cada um dos três registros funcionais (solo 66-108, base 48-65, baixo 21-47), o número de tokens decorridos desde a última nota emitida nele. Quando esse contador ultrapassa 60 tokens (aproximadamente 4 segundos de música), os logits dos NOTE_ON correspondentes àquele registro recebem um bônus acumulativo proporcional ao tempo de silêncio. Trata-se de um "convite probabilístico" para que o instrumento ausente volte à composição, sem impor sua presença. A textura resultante é a de uma banda em que cada voz tem espaço próprio mas conversa com as outras.
 
@@ -179,7 +187,7 @@ Os experimentos foram realizados em GPU NVIDIA RTX 4060 Ti (8 GB VRAM), CPU Inte
 
 ### 5.1. Métricas Quantitativas
 
-Para avaliar objetivamente o sistema proposto, foram calculadas cinco métricas sobre amostras geradas pelo Transformer e pelo baseline Markov:
+Para avaliar objetivamente o sistema proposto, foram calculadas cinco métricas sobre amostras geradas pelo Transformer e pelo baseline Markov. O conjunto de métricas foi selecionado com base na revisão de práticas de avaliação de modelos generativos musicais conduzida por Yang and Lerch (2020), que destaca a importância de combinar medidas de variabilidade (diversidade de pitches), densidade temporal, abrangência tonal e regularidade rítmica para caracterizar saídas geradas de forma objetiva.
 
 - **pitch_diversity**: razão entre pitches únicos e total de notas
 - **note_density**: notas por segundo
@@ -254,45 +262,18 @@ A integração desse sistema em ferramentas de auxílio à composição musical,
 
 - Dong, H., Hsiao, W., Yang, L., and Yang, Y. (2018). MuseGAN: Multi-track sequential generative adversarial networks for symbolic music generation and accompaniment. In *Proceedings of the AAAI Conference on Artificial Intelligence*, 32(1).
 - Gillick, J., Roberts, A., Engel, J., Eck, D., and Bamman, D. (2019). Learning to groove with inverse sequence transformations. In *International Conference on Machine Learning (ICML)*, pages 2269–2279.
+- Goodfellow, I., Bengio, Y., and Courville, A. (2016). *Deep Learning*. MIT Press.
+- Hadjeres, G., Pachet, F.-D., and Nielsen, F. (2017). DeepBach: A Steerable Model for Bach Chorales Generation. In *Proceedings of the 34th International Conference on Machine Learning (ICML)*, pages 1362–1371.
 - Hawthorne, C., Stasyuk, A., Roberts, A., Simon, I., Huang, C., Dieleman, S., Elsen, E., Engel, J., and Eck, D. (2019). Enabling factorized piano music modeling and generation with the MAESTRO dataset. In *International Conference on Learning Representations (ICLR)*.
+- Hochreiter, S., and Schmidhuber, J. (1997). Long Short-Term Memory. *Neural Computation*, 9(8):1735–1780.
 - Holtzman, A., Buys, J., Du, L., Forbes, M., and Choi, Y. (2020). The curious case of neural text degeneration. In *International Conference on Learning Representations (ICLR)*.
 - Huang, C., Vaswani, A., Uszkoreit, J., Shazeer, N., Simon, I., Hawthorne, C., Dai, A., Hoffman, M., Dinculescu, M., and Eck, D. (2018). Music transformer: Generating music with long-term structure. *arXiv preprint arXiv:1809.04281*.
 - Huang, Y. and Yang, Y. (2020). Pop music transformer: Beat-based modeling and generation of expressive pop piano compositions. In *Proceedings of the 28th ACM International Conference on Multimedia*, pages 1180–1188.
+- Krumhansl, C. L., and Kessler, E. J. (1982). Tracing the dynamic changes in perceived tonal organization in a spatial representation of musical keys. *Psychological Review*, 89(4):334–368.
+- Loshchilov, I., and Hutter, F. (2017). SGDR: Stochastic Gradient Descent with Warm Restarts. In *International Conference on Learning Representations (ICLR)*.
+- Loshchilov, I., and Hutter, F. (2019). Decoupled Weight Decay Regularization. In *International Conference on Learning Representations (ICLR)*.
+- Radford, A., Wu, J., Child, R., Luan, D., Amodei, D., and Sutskever, I. (2019). Language Models are Unsupervised Multitask Learners. *OpenAI Technical Report*.
+- Roberts, A., Engel, J., Raffel, C., Hawthorne, C., and Eck, D. (2018). A Hierarchical Latent Vector Model for Learning Long-Term Structure in Music. In *Proceedings of the 35th International Conference on Machine Learning (ICML)*, pages 4364–4373.
 - Vaswani, A., Shazeer, N., Parmar, N., Uszkoreit, J., Jones, L., Gomez, A., Kaiser, L., and Polosukhin, I. (2017). Attention is all you need. In *Advances in Neural Information Processing Systems (NeurIPS)*, volume 30.
 - Wang, Z., Chen, K., Jiang, J., Zhang, Y., Xu, M., Dai, S., Bin, G., and Xia, G. (2020). POP909: A pop-song dataset for music arrangement generation. In *Proceedings of the 21st International Society for Music Information Retrieval Conference (ISMIR)*.
-
----
-
-## Referências Complementares
-
-Referências adicionais consolidadas a partir da Revisão Bibliográfica Parcial (PC1) que sustentam a fundamentação teórica e metodológica deste trabalho. As entradas a seguir podem ser integradas à lista principal de referências em ordem alfabética durante a etapa de formatação final.
-
-- Abadi, M., Barham, P., Chen, J., Chen, Z., Davis, A., Dean, J., et al. (2016). TensorFlow: A System for Large-Scale Machine Learning. In *Proceedings of the 12th USENIX Symposium on Operating Systems Design and Implementation (OSDI)*, pages 265–283. (Referência da infraestrutura de aprendizado profundo; embora o presente trabalho utilize PyTorch, TensorFlow é mencionado como ferramenta padrão na área.)
-- Boulanger-Lewandowski, N., Bengio, Y., and Vincent, P. (2012). Modeling Temporal Dependencies in High-Dimensional Sequences: Application to Polyphonic Music Generation and Transcription. In *Proceedings of the 29th International Conference on Machine Learning (ICML)*. (Trabalho seminal na modelagem de sequências polifônicas, antecedendo as abordagens baseadas em Transformer.)
-- Briot, J.-P., Hadjeres, G., and Pachet, F.-D. (2020). *Deep Learning Techniques for Music Generation*. Springer. (Revisão abrangente de técnicas de geração musical com deep learning; referência geral para a Seção 2.)
-- Choi, K., Fazekas, G., Sandler, M., and Cho, K. (2017). Convolutional Recurrent Neural Networks for Music Classification. In *Proceedings of the IEEE International Conference on Acoustics, Speech and Signal Processing (ICASSP)*.
-- Dhariwal, P., Jun, H., Payne, C., Kim, J. W., Radford, A., and Sutskever, I. (2020). Jukebox: A Generative Model for Music. *arXiv preprint arXiv:2005.00341*. (Modelo de geração musical em domínio de áudio cru — referência contrastiva ao nosso domínio simbólico em MIDI.)
-- Goodfellow, I., Bengio, Y., and Courville, A. (2016). *Deep Learning*. MIT Press. (Referência canônica para fundamentos de aprendizado profundo: redes neurais, otimização, regularização, dropout, gradient clipping.)
-- Hadjeres, G., Pachet, F.-D., and Nielsen, F. (2017). DeepBach: a Steerable Model for Bach Chorales Generation. In *Proceedings of the 34th International Conference on Machine Learning (ICML)*. (Modelo dirigível para geração de corais de Bach — exemplo clássico de integração entre ML e teoria musical.)
-- Hochreiter, S., and Schmidhuber, J. (1997). Long Short-Term Memory. *Neural Computation*, 9(8):1735–1780. (Arquitetura LSTM, predecessora do Transformer em modelagem sequencial. Discutida na Seção 2 como contraste ao mecanismo de atenção.)
-- Huang, A., Cooijmans, T., Roberts, A., Courville, A., and Eck, D. (2017). Counterpoint by Convolution. *arXiv preprint arXiv:1710.08300*. (Aplicação de CNNs a contraponto musical — abordagem alternativa ao paradigma de modelagem sequencial.)
-- Kingma, D. P., and Ba, J. (2014). Adam: A Method for Stochastic Optimization. *arXiv preprint arXiv:1412.6980*. (Algoritmo de otimização base do AdamW utilizado no treinamento — Seção 4.4.)
-- LeCun, Y., Bengio, Y., and Hinton, G. (2015). Deep Learning. *Nature*, 521(7553):436–444. (Revisão amplamente citada que estabeleceu deep learning como paradigma dominante no aprendizado de máquina.)
-- Lin, Y., Liu, Z., and Sun, M. (2023). Adaptive Music Generation in Games Using GANs and Attention Networks. *Journal of Game Development Research*, 15(3):113–129. (Aplicação contemporânea de redes generativas em contexto interativo — referência atual em geração musical.)
-- Roberts, A., Engel, J., Raffel, C., Hawthorne, C., and Eck, D. (2018). A Hierarchical Latent Vector Model for Learning Long-Term Structure in Music. In *Proceedings of the 35th International Conference on Machine Learning (ICML)*. (MusicVAE — modelo VAE hierárquico para interpolação estilística; alternativa aos Transformers para o problema de geração musical de longo prazo.)
-- Srivastava, N., Hinton, G., Krizhevsky, A., Sutskever, I., and Salakhutdinov, R. (2014). Dropout: A Simple Way to Prevent Neural Networks from Overfitting. *Journal of Machine Learning Research*, 15(56):1929–1958. (Técnica de regularização clássica; complementa o label smoothing utilizado neste trabalho.)
-- Sturm, B. L., Santos, J. F., Ben-Tal, O., and Korshunova, I. (2016). Music Transcription Modelling and Composition Using Deep Learning. In *Proceedings of the 1st Conference on Computer Simulation of Musical Creativity*. (Estudo crítico sobre o que modelos de deep learning realmente aprendem em tarefas musicais.)
-- Yang, L.-C., and Lerch, A. (2020). On the Evaluation of Generative Models in Music. *Neural Computing and Applications*, 32(9):4773–4784. (Revisão de métricas objetivas para avaliação de música gerada — diretamente relacionada à metodologia da Seção 5.1.)
-- Yang, L.-C., Chou, S.-Y., and Yang, Y.-H. (2019). MidiNet: A Convolutional Generative Adversarial Network for Symbolic-Domain Music Generation. In *Proceedings of the 18th International Society for Music Information Retrieval Conference (ISMIR)*. (Abordagem GAN-baseada para geração simbólica; comparação alternativa ao baseline Markov utilizado.)
-
-### Referências externas adicionais (não constantes no PC1)
-
-Trabalhos identificados como diretamente relevantes ao pipeline desenvolvido neste TCC, em particular para fundamentar componentes específicos da metodologia (otimizador, detecção automática de tonalidade, arquitetura decoder-only) que não foram cobertos pela Revisão Bibliográfica Parcial.
-
-- Donahue, C., Mao, H. H., Li, Y. E., Cottrell, G. W., and McAuley, J. (2019). LakhNES: Improving Multi-Instrumental Music Generation with Cross-Domain Pre-training. In *Proceedings of the 20th International Society for Music Information Retrieval Conference (ISMIR)*. (Geração multi-instrumental com pré-treinamento cross-domain — relevante para a Seção 3 e para a discussão de trabalhos futuros sobre extensão multi-instrumental condicionada.)
-- Krumhansl, C. L., and Kessler, E. J. (1982). Tracing the dynamic changes in perceived tonal organization in a spatial representation of musical keys. *Psychological Review*, 89(4):334–368. (**Referência crítica:** algoritmo de detecção de tonalidade utilizado pela flag `--auto_key` do sistema. Embora a implementação seja parte do pipeline, o método empregado é diretamente derivado deste trabalho.)
-- Loshchilov, I., and Hutter, F. (2019). Decoupled Weight Decay Regularization. In *International Conference on Learning Representations (ICLR)*. (**AdamW** — otimizador efetivamente utilizado no treinamento, com desacoplamento entre weight decay e atualização do gradiente; mencionado na Seção 4.4.)
-- Müller, M. (2007). *Information Retrieval for Music and Motion*. Springer. (Referência canônica em Music Information Retrieval; útil como apoio à discussão de representações simbólicas, quantização temporal e análise de pitch classes.)
-- Radford, A., Wu, J., Child, R., Luan, D., Amodei, D., and Sutskever, I. (2019). Language Models are Unsupervised Multitask Learners. *OpenAI Technical Report*. (**GPT-2** — modelo de referência canônico para arquiteturas decoder-only autoregressivas, alinhado ao paradigma utilizado em nosso `MultiInstrumentTransformer`.)
-- Thickstun, J., Hall, D., Donahue, C., and Liang, P. (2024). Anticipatory Music Transformer. *Transactions on Machine Learning Research (TMLR)*. (Trabalho recente em geração musical com Transformer condicionado por antecipação — referência atual de 2024 que pode ser citada como direção promissora em trabalhos futuros.)
-- Loshchilov, I., and Hutter, F. (2017). SGDR: Stochastic Gradient Descent with Warm Restarts. In *International Conference on Learning Representations (ICLR)*. (Schedule de learning rate com decaimento cossenoidal — base do agendamento utilizado neste trabalho após warmup linear.)
+- Yang, L.-C., and Lerch, A. (2020). On the Evaluation of Generative Models in Music. *Neural Computing and Applications*, 32(9):4773–4784.
