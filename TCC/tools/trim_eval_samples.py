@@ -94,8 +94,8 @@ def main():
         # Sobrescreve in-place (backup em /work já preserva originais)
         original_dur, target_dur = trim_midi(path, path, args.duration)
         was_longer = original_dur > args.duration + 0.5
-        marker = '✂ ' if was_longer else '  '
-        print(f"  {marker}{os.path.basename(path):20s}  {original_dur:6.1f}s → {target_dur:.1f}s")
+        marker = '[cut] ' if was_longer else '      '
+        print(f"  {marker}{os.path.basename(path):20s}  {original_dur:6.1f}s -> {target_dur:.1f}s")
 
     print()
     print("Pronto. Próximo: re-converter os .mid em .mp3 (MuseScore ou midi2audio).")

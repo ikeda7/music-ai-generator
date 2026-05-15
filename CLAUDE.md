@@ -84,7 +84,7 @@ python train.py --data_path ./datasets/maestro ./datasets/pop909 ./datasets/groo
 python train.py --data_path ./datasets/maestro ./datasets/pop909 ./datasets/groove --resume checkpoints/checkpoint_epoch_74.pt --reset_best_loss
 
 # ============ GERAÇÃO ============
-# MODO RECOMENDADO PRO TCC: TRIO + SOLID BASE (banda híbrida ML+algorítmica)
+# MODO RECOMENDADO PRO TCC: TRIO + SOLID BASE (3 vozes de piano, sem bateria)
 # Bass marca tônica/quinta no compasso; base toca acordes I-V-vi-IV (ou i-VI-iv-V em
 # menor); solo (registro >65) vem do modelo. Funciona em maior (--key C) e menor (--key Am).
 python generate.py --checkpoint checkpoints/checkpoint_epoch_74.pt --output banda.mid --key Am --temperature 0.95 --top_k 50 --tempo 95 --render_as_trio --solid_base
@@ -180,9 +180,9 @@ No modo `--render_as_band`, essas 3 vozes são remapeadas para timbres distintos
 |------|------|-------------|
 | Piano solo single-track | (default) | Output cru do modelo, debug, baseline |
 | Trio piano | `--render_as_trio` | 3 tracks de piano (solo/base/baixo) com filtros funcionais |
-| Trio piano + base sintética | `--render_as_trio --solid_base --key X` | **Modo canônico do TCC** — banda híbrida ML+algorítmica |
+| Trio piano + base sintética | `--render_as_trio --solid_base --key X` | **Modo canônico do TCC** — 3 vozes de piano (solo do modelo + base/baixo algorítmicos) |
 | Banda GM | `--render_as_band` | Demo com timbres GM distintos (qualidade limitada de sintetizadores) |
-| **+ Bateria algorítmica** | `--add_drums` | Combinável com qualquer modo acima — injeta padrão rock/pop 4/4 no canal 9 GM |
+| + Bateria (exploratório) | `--add_drums` | **Não-canônico** — desincroniza com saída do modelo em peças >30s. Mantido como feature, retirado do TCC. |
 
 **Detalhes do `--solid_base`** (só ativa se `--key` for fornecido):
 - Progressão: I-V-vi-IV em maior; i-VI-iv-V em menor (V harmônico com 3ª maior)

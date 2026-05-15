@@ -1,5 +1,5 @@
 """
-Conversor MIDI → MP3 em batch.
+Conversor MIDI -> MP3 em batch.
 
 Detecta automaticamente o melhor backend disponível na máquina:
 1. MuseScore CLI       — alta qualidade, soundfont embutido (recomendado)
@@ -78,7 +78,7 @@ def find_ffmpeg():
 
 
 def find_soundfont(custom=None):
-    """Localiza .sf2 via arg → env → caminhos comuns."""
+    """Localiza .sf2 via arg -> env -> caminhos comuns."""
     if custom and os.path.isfile(custom):
         return custom
     env_path = os.environ.get('SOUNDFONT_PATH')
@@ -98,7 +98,7 @@ def find_soundfont(custom=None):
 
 
 def convert_via_musescore(musescore, midi_path, mp3_path):
-    """MuseScore CLI converte direto MIDI → MP3 usando seu soundfont interno."""
+    """MuseScore CLI converte direto MIDI -> MP3 usando seu soundfont interno."""
     cmd = [musescore, '-o', mp3_path, midi_path]
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
     if r.returncode != 0:
@@ -139,7 +139,7 @@ def collect_files(input_path):
 
 
 def main():
-    parser = argparse.ArgumentParser(description='MIDI → MP3 batch converter')
+    parser = argparse.ArgumentParser(description='MIDI -> MP3 batch converter')
     parser.add_argument('input', help='Arquivo .mid ou diretório com .mids')
     parser.add_argument('--backend', choices=['auto', 'musescore', 'fluidsynth'],
                         default='auto', help='Backend de conversão (default auto)')
@@ -205,7 +205,7 @@ def main():
         mp3_name = os.path.splitext(os.path.basename(midi_path))[0] + '.mp3'
         mp3_path = os.path.join(out_dir, mp3_name)
 
-        print(f"  {os.path.basename(midi_path)} → {mp3_name}")
+        print(f"  {os.path.basename(midi_path)} -> {mp3_name}")
         if backend == 'musescore':
             success = convert_via_musescore(musescore, midi_path, mp3_path)
         else:
@@ -214,9 +214,9 @@ def main():
         if success:
             ok += 1
             size_kb = os.path.getsize(mp3_path) // 1024
-            print(f"    ✓ {size_kb} KB")
+            print(f"    [OK] {size_kb} KB")
         else:
-            print(f"    ✗ falhou")
+            print(f"    [X] falhou")
 
     print(f"\n{ok}/{len(files)} conversões bem-sucedidas.")
     return 0 if ok == len(files) else 1

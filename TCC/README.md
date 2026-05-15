@@ -14,12 +14,12 @@ python tools/download_datasets.py --all
 # 3. Treinar (ou usar o checkpoint pronto, ep74)
 python train.py --data_path ./datasets/maestro ./datasets/pop909 ./datasets/groove
 
-# 4. Gerar música no modo canônico (banda híbrida — trio piano + bateria)
+# 4. Gerar música no modo canônico (trio de piano: solo + base + baixo)
 python generate.py \
   --checkpoint checkpoints/checkpoint_epoch_74.pt \
   --output minha_musica.mid \
   --key C --tempo 100 --temperature 0.9 --top_k 40 \
-  --render_as_trio --solid_base --add_drums
+  --render_as_trio --solid_base
 
 # 5. Visualizar piano roll colorido por papel funcional
 python show_midi.py minha_musica.mid
@@ -66,9 +66,9 @@ Datasets, checkpoints e samples não são versionados (estão no `.gitignore`).
 |------|------|-------------|
 | Piano solo single-track | (default) | Output cru do modelo, debug |
 | Trio piano | `--render_as_trio` | 3 tracks de piano (solo/base/baixo) com filtros funcionais |
-| **Trio + base sintética** | `--render_as_trio --solid_base --key X` | **Modo canônico** — banda híbrida ML+algorítmica |
+| **Trio + base sintética** | `--render_as_trio --solid_base --key X` | **Modo canônico** — 3 vozes de piano (solo do modelo + base/baixo algorítmicos) |
 | Banda GM | `--render_as_band` | Demo com timbres GM distintos (qualidade limitada) |
-| **+ Bateria** | `--add_drums` | Combinável com qualquer modo — padrão rock/pop 4/4 no canal 9 |
+| + Bateria (exploratório) | `--add_drums` | Não-canônico — desincroniza com modelo em peças longas. Mantido como flag opcional. |
 
 ## Instalação
 
@@ -119,10 +119,10 @@ O treino salva checkpoints em `checkpoints/checkpoint_epoch_X.pt` quando a loss 
 ## Geração — exemplos completos
 
 ```bash
-# Banda completa em menor (modo recomendado para apresentação)
+# Trio de piano em menor (modo recomendado para apresentação)
 python generate.py --checkpoint checkpoints/checkpoint_epoch_74.pt \
   --output banda_Am.mid --key Am --tempo 95 --temperature 0.95 --top_k 50 \
-  --render_as_trio --solid_base --add_drums
+  --render_as_trio --solid_base
 
 # Apenas trio sem fundação algorítmica (modelo puro)
 python generate.py --checkpoint checkpoints/checkpoint_epoch_74.pt \

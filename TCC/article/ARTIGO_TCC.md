@@ -169,7 +169,7 @@ Cada track recebe filtros específicos de pós-processamento: monofonia (apenas 
 
 É importante destacar que o modo `--solid_base` é uma escolha de engenharia, não a base do sistema. O pipeline funciona em modo *puro* (`--render_as_trio` sem `--solid_base`), com baixo e base provenientes integralmente do modelo guiado pelo Constrained Decoding. A análise comparativa entre os dois modos será objeto de trabalho futuro.
 
-**Estágio 5 — Bateria algorítmica (`--add_drums`).** Como o conjunto de dados Groove MIDI ainda não foi integrado a um modelo dedicado (ver Seção 6), o pipeline injeta opcionalmente um padrão rítmico determinístico na faixa de percussão (canal 9 GM): kick (36) nos tempos 1 e 3, snare (38) nos tempos 2 e 4, hi-hat fechado (42) em cada colcheia (oito por compasso) e hi-hat aberto (46) em transições a cada quatro compassos. A velocidade de cada hit tem variação aleatória ±5–8 unidades para evitar a sonoridade mecânica típica de baterias programadas. O padrão sincroniza-se automaticamente com o tempo da peça gerada pelo modelo, completando a textura de banda.
+Adicionalmente, o sistema dispõe de uma flag opcional `--add_drums` que injeta um padrão de bateria determinístico no canal 9 GM (kick 1&3, snare 2&4, hi-hat em colcheias). Este recurso foi implementado como artefato exploratório e *não compõe o pipeline canônico do TCC*. Em testes preliminares observou-se desincronização gradual entre o padrão de bateria (em tempo estrito) e a saída do modelo (em tempo livre, característico do MAESTRO), além de baixa variabilidade percebida entre amostras. O caminho mais consistente para integração rítmica futura é o treinamento de um modelo dedicado sobre o Groove MIDI Dataset (ver Seção 6).
 
 ### 4.6. Ambiente de Execução
 
@@ -209,17 +209,24 @@ A métrica em que o Transformer claramente supera o Markov é **ioi_std**, indic
 
 ### 5.2. Análise Qualitativa
 
-Inspeção visual dos *piano rolls* revela diferenças marcantes entre os modelos. Amostras do Transformer apresentam quatro camadas visualmente distintas e funcionalmente coordenadas: solo melódico em registro alto, acordes regulares no registro médio formando o backbone harmônico, walking bass no registro grave e padrão de bateria contínuo na faixa de percussão. Amostras Markov, em contraste, mostram dispersão homogênea de pitches concentrada predominantemente em um único registro (médio-alto), sem agrupamento funcional, sem fundação rítmica e sem qualquer separação clara de papéis musicais.
+Inspeção visual dos *piano rolls* revela diferenças marcantes entre os modelos. Amostras do Transformer apresentam três camadas visualmente distintas e funcionalmente coordenadas: solo melódico em registro alto, acordes regulares no registro médio formando o backbone harmônico, e walking bass no registro grave. Amostras Markov, em contraste, mostram dispersão homogênea de pitches concentrada predominantemente em um único registro (médio-alto), sem agrupamento funcional, sem fundação rítmica e sem qualquer separação clara de papéis musicais.
 
-A Figura 2 ilustra essa diferença comparando amostras representativas de cada modelo. As tracks coloridas representam papéis funcionais inferidos pelo registro de pitch: solo (verde), base harmônica (azul), baixo (roxo) e bateria (rosa). Nas amostras do Transformer (esquerda) observam-se as quatro camadas operando em paralelo de forma coordenada; nas amostras do Markov (direita), apenas uma ou duas faixas estão ativas, sem alinhamento métrico.
+A Figura 2 ilustra essa diferença comparando amostras representativas de cada modelo. As tracks coloridas representam papéis funcionais inferidos pelo registro de pitch: solo (verde), base harmônica (azul) e baixo (roxo). Nas amostras do Transformer (esquerda) observam-se as três camadas operando em paralelo de forma coordenada; nas amostras do Markov (direita), apenas uma ou duas faixas estão ativas, sem alinhamento métrico.
 
-![Figura 2. Comparação visual de piano rolls — Transformer (esquerda, tonalidades Em e Am) vs Markov (direita). Cores indicam papel funcional inferido pelo registro de pitch: verde = solo, azul = base, roxo = baixo, rosa = bateria.](figura_comparacao.png)
+![Figura 2. Comparação visual de piano rolls — Transformer (esquerda) vs Markov (direita). Cores indicam papel funcional inferido pelo registro de pitch: verde = solo, azul = base harmônica, roxo = baixo.](figura_comparacao.png)
 
 A análise auditiva confirma a inspeção visual: amostras do Transformer são percebidas como composições estruturadas, com sensação de início-desenvolvimento-fim, enquanto Markov é caracterizado por avaliadores informais como "música aleatória" ou "improvisação caótica".
 
 ### 5.3. Avaliação Subjetiva (MOS) — em andamento
 
-A avaliação subjetiva via *Mean Opinion Score* (MOS) está em fase de coleta. Oito amostras (quatro Transformer + quatro Markov) foram geradas, anonimizadas com códigos `sample_A` a `sample_H` e padronizadas em duração de 60 segundos. As quatro amostras do Transformer cobrem diferentes tonalidades (C maior, G maior, A menor, E menor) e diferentes tempos (90 a 100 BPM), com sementes distintas para a humanização rítmica da bateria, evitando que avaliadores agrupem amostras pela percepção de um padrão percussivo idêntico. O formulário avalia quatro critérios em escala Likert de 1 a 5: naturalidade, coerência rítmica, qualidade harmônica e agradabilidade. Resultados completos serão apresentados na defesa final.
+A avaliação subjetiva via *Mean Opinion Score* (MOS) está em fase de coleta. Oito amostras (quatro Transformer + quatro Markov) foram geradas, anonimizadas com códigos `sample_A` a `sample_H` e padronizadas em duração de 60 segundos. As quatro amostras do Transformer foram deliberadamente diversificadas em estilo, cobrindo distintas combinações de tonalidade, andamento e parâmetros de amostragem:
+
+- **Balada lenta** em A menor (75 BPM, temperatura 0,85, top-k 30): textura esparsa, foco melódico
+- **Pop padrão** em C maior (100 BPM, temperatura 0,9, top-k 40): densidade moderada, estrutura clara
+- **Rock energético** em G maior (125 BPM, temperatura 1,0, top-k 60): alta densidade rítmica
+- **Exploração livre** em E menor (95 BPM, temperatura 1,1, top-k 80): textura ousada, mais dissonâncias
+
+Essa variedade busca demonstrar que o sistema não produz apenas variações de tom sobre uma mesma "personalidade rítmica", mas adapta-se substancialmente conforme os parâmetros de amostragem. O formulário avalia quatro critérios em escala Likert de 1 a 5: naturalidade, coerência rítmica, qualidade harmônica e agradabilidade. Resultados completos serão apresentados na defesa final.
 
 #### 5.3.1. Consideração metodológica
 
