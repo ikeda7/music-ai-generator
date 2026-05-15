@@ -17,14 +17,36 @@ TCC/                          ← raiz do repositório git
 ├── PC2/                      ← fase 2: protótipo notebook anterior + slides
 └── TCC/                      ← código-fonte do sistema final
     ├── config.json           ← fonte da verdade para hiperparâmetros
+    │
+    ├── [CORE — pipeline ML]
     ├── data_processor.py     ← tokenização REMI-like e dataset
     ├── model.py              ← arquitetura Transformer
     ├── train.py              ← loop de treinamento (com AMP)
     ├── generate.py           ← geração com filtros de escala/registro e modos de render
-    ├── music_utils.py        ← conversão tokens → MIDI (trio / band / solid_base)
+    ├── music_utils.py        ← conversão tokens → MIDI (trio / band / solid_base / drums)
     ├── diagnostico.py        ← diagnóstico de mode collapse
-    ├── show_midi.py          ← piano roll PNG
-    ├── download_datasets.py  ← downloader (MAESTRO/Groove/POP909)
+    ├── show_midi.py          ← piano roll PNG colorido por papel
+    │
+    ├── tools/                ← utilitários auxiliares
+    │   ├── download_datasets.py  ← downloader (MAESTRO/Groove/POP909)
+    │   └── trim_eval_samples.py  ← padroniza duração dos samples
+    │
+    ├── evaluation/           ← baseline, métricas, MOS, plotagem
+    │   ├── markov_baseline.py    ← cadeia de Markov ordem 1
+    │   ├── metrics.py            ← métricas quantitativas → CSV
+    │   ├── make_eval_set.py      ← gerador set MOS (Transformer + Markov)
+    │   ├── analyze_mos.py        ← análise das respostas do Forms
+    │   ├── plot_comparison_rolls.py
+    │   ├── plot_metrics_comparison.py
+    │   └── plot_training_curves.py
+    │
+    ├── article/              ← artigo + figuras
+    │   ├── ARTIGO_TCC.md         ← artigo (markdown)
+    │   ├── MOS_GUIDE.md          ← guia operacional do MOS
+    │   ├── figura_metricas.png
+    │   ├── figura_comparacao.png
+    │   └── artigo.docx / artigo.pdf  ← versões compiladas
+    │
     └── README.md             ← documentação geral (foco usuário externo)
 
 notes.md  ← esqueleto da dissertação final (raiz do repo)
@@ -88,8 +110,28 @@ python generate.py --checkpoint checkpoints/checkpoint_epoch_74.pt --output musi
 # Diagnóstico de mode collapse
 python diagnostico.py checkpoints/checkpoint_epoch_74.pt
 
-# Piano roll PNG
+# Piano roll PNG colorido por papel funcional (Solo/Base/Baixo/Bateria)
 python show_midi.py arquivo.mid
+
+# ============ AVALIAÇÃO (rodar do diretório TCC/) ============
+# Baseline Markov pra comparação
+python evaluation/markov_baseline.py --dataset ./datasets/maestro --output markov.mid
+
+# Métricas quantitativas (CSV)
+python evaluation/metrics.py --input ./eval_samples --output metricas.csv
+
+# Gera set MOS (4 Transformer + 4 Markov anonimizados)
+python evaluation/make_eval_set.py --output_dir ./eval_samples
+
+# Padroniza duração dos samples
+python tools/trim_eval_samples.py --input_dir ./eval_samples --duration 60
+
+# Análise das respostas do Forms
+python evaluation/analyze_mos.py --responses respostas.csv --legend eval_samples/legend.json
+
+# Figuras pro artigo
+python evaluation/plot_comparison_rolls.py --inputs eval_samples/sample_A.mid eval_samples/sample_B.mid --labels Transformer Markov --output article/figura_comparacao.png
+python evaluation/plot_metrics_comparison.py --metrics eval_samples/metricas.csv --legend eval_samples/legend.json --output article/figura_metricas.png
 ```
 
 ## Arquitetura do Sistema
@@ -140,6 +182,7 @@ No modo `--render_as_band`, essas 3 vozes são remapeadas para timbres distintos
 | Trio piano | `--render_as_trio` | 3 tracks de piano (solo/base/baixo) com filtros funcionais |
 | Trio piano + base sintética | `--render_as_trio --solid_base --key X` | **Modo canônico do TCC** — banda híbrida ML+algorítmica |
 | Banda GM | `--render_as_band` | Demo com timbres GM distintos (qualidade limitada de sintetizadores) |
+| **+ Bateria algorítmica** | `--add_drums` | Combinável com qualquer modo acima — injeta padrão rock/pop 4/4 no canal 9 GM |
 
 **Detalhes do `--solid_base`** (só ativa se `--key` for fornecido):
 - Progressão: I-V-vi-IV em maior; i-VI-iv-V em menor (V harmônico com 3ª maior)

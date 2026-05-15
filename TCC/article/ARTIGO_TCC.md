@@ -1,4 +1,4 @@
-# Geração de Música Multi-instrumental com Transformer Decoder e Pipeline Híbrido ML-Algorítmico
+# Geração de Música por Meio de Inteligência Artificial Generativa
 
 **Lucas Vinícius de Carvalho Ikeda¹, Orientador: Prof. Dr. Danillo Roberto Pereira²**
 
@@ -129,25 +129,28 @@ A quantização temporal utiliza resolução de 16 steps por segundo (ticks_per_
 
 O treinamento foi conduzido com a biblioteca PyTorch, otimizador AdamW (learning rate inicial $1 \times 10^{-4}$, weight decay 0,01), gradient clipping de norma 1,0 e *Cross-Entropy Loss* com *label smoothing* de 0,1. O agendamento de learning rate aplica warmup linear durante 2.000 steps seguido de decaimento cossenoidal até 5% do valor inicial.
 
+A escolha do valor $\epsilon = 0{,}1$ para o *label smoothing* não foi arbitrária — foi resposta direta a um problema diagnosticado experimentalmente. Em testes preliminares sem suavização, observou-se que o modelo desenvolvia *overconfidence* progressiva sobre tokens "seguros" do vocabulário, em particular sobre o token TIME_SHIFT de menor magnitude. À medida que essa saturação de probabilidade avançava, a amostragem passava a produzir silêncios contínuos (drones) ou repetições de díades fixas após algumas dezenas de tokens — fenômeno conhecido como *mode collapse*. O *label smoothing* atua como regularização redistributiva: ele força o modelo a manter probabilidade residual ($\epsilon / V$, onde $V$ é o tamanho do vocabulário) em todos os outros tokens, evitando que a entropia da distribuição preditiva colapse para zero. O valor 0,1 foi selecionado empiricamente como o menor valor capaz de eliminar o colapso sem prejudicar a precisão preditiva do modelo nos pitches musicalmente relevantes.
+
 Foram utilizadas técnicas de *Automatic Mixed Precision* (AMP) para reduzir o uso de VRAM em cerca de 40% e acelerar a iteração em aproximadamente 2x. Como aumento de dados, aplicou-se transposição aleatória dos pitches em [0, +4, +8] semitons, excluindo a track de bateria.
 
 O modelo foi treinado por 74 épocas com batch size de 8 e sequências de 512 tokens com sobreposição de 50%. A função de loss de validação foi monitorada para detecção precoce de overfitting; um diagnóstico automático a cada 5 épocas detecta colapso de modo (geração restrita a poucos pitches únicos) e dispara alertas. A loss de validação convergiu a 2,3988 na época 74, ponto a partir do qual checkpoints subsequentes apresentaram tendência ao colapso de modo (geração restrita a díades fixas após platô prolongado em learning rate baixo). Esse comportamento foi confirmado por inspeção auditiva e visual dos piano rolls das amostras geradas em épocas posteriores (89, 99, 109), justificando a decisão de congelar o modelo na época 74 como checkpoint final.
 
 ### 4.5. Pipeline de Geração
 
-A geração ocorre em quatro estágios complementares:
+A geração no sistema proposto não é uma simples amostragem autoregressiva do modelo — é um processo controlado em múltiplos estágios no qual o Transformer treinado opera em conjunto com técnicas de *Constrained Decoding* (decodificação restrita) e pós-processamento determinístico inspirado em teoria musical. A motivação dessa arquitetura híbrida é exata: o modelo aprende as regularidades musicais a partir dos dados, mas técnicas neurais isoladas frequentemente exibem comportamentos indesejados em sequências longas (perda de tempo, mode collapse, monotonia). As intervenções descritas a seguir não substituem o modelo, mas direcionam a sua amostragem para regiões do espaço de saída musicalmente coerentes.
 
-**Estágio 1 — Amostragem autoregressiva com restrições de vocabulário.** O modelo gera tokens um a um, com sete restrições aplicadas via `vocab_constraint_fn`:
+**Estágio 1 — Amostragem autoregressiva com restrições de vocabulário.** Em cada passo de geração, o Transformer produz a distribuição de probabilidade $P(x_t | x_{1..t-1})$ sobre os ~349 tokens do vocabulário. Antes da amostragem, essa distribuição é modificada por uma função de restrição (`vocab_constraint_fn`) que ajusta os logits de tokens específicos com base no contexto recente. As intervenções aplicadas são:
 
-1. VELOCITY só após NOTE_ON (gramatical)
-2. Forçar INSTRUMENT_0 (piano único) — bloqueia outros instrumentos
-3. Voice leading por registro — penaliza saltos > 7 semitons em solo, > 12 semitons em baixo/base
-4. Repetition penalty de -1,0 em NOTE_ON/TIME_SHIFT nas últimas 16 posições
-5. Bloqueio de EOS nos primeiros 300 tokens
-6. Chord backbone I-V-vi-IV (opt-in via `--key`)
-7. Re-entry bias por registro silente — bônus positivo em NOTE_ON do registro ausente há > 60 tokens
+1. **Restrição gramatical**: tokens VELOCITY só podem ser amostrados imediatamente após um NOTE_ON, evitando que o modelo entre em ciclo gerando VELOCITY consecutivas
+2. **Slot único**: tokens INSTRUMENT_1..4 são bloqueados, forçando o modelo a operar sobre INSTRUMENT_0 (piano), o que permite que as três vozes emerjam naturalmente dos registros aprendidos do MAESTRO
+3. **Voice leading por registro**: NOTE_ON cujo intervalo em relação à última nota do mesmo registro exceder limiar (7 semitons no solo, 12 no baixo/base) recebe penalidade nos logits, favorecendo movimentos por grau conjunto
+4. **Repetition penalty soft**: NOTE_ON e TIME_SHIFT presentes nas últimas 16 posições recebem desconto de –1,0 no logit, reduzindo loops sem zerar a probabilidade
+5. **Bloqueio de EOS** durante os primeiros 300 tokens, evitando peças curtas demais
+6. **Chord backbone**: quando uma tonalidade é fornecida (`--key`), pitches consonantes com a progressão I-V-vi-IV no registro de Base recebem bônus de logit, induzindo o modelo a respeitar a harmonia diatônica sem forçar pitches específicos
 
-**Estágio 2 — Separação de vozes por registro.** O modelo é treinado predominantemente em piano solo (MAESTRO), de forma que as três vozes (solo, base harmônica, baixo) emergem naturalmente dos diferentes registros de pitch da mão direita e esquerda. Esses registros são separados em tracks distintas:
+**Estágio 2 — Re-entry bias dinâmico.** Esta foi a contribuição mais delicada do trabalho. O modelo treinado predominantemente em MAESTRO (piano solo) demonstrou tendência a se "fixar" em um único registro de pitch após o início da peça, gerando longas seções monofônicas. Tentativas iniciais de mitigar esse comportamento por meio de *hard constraints* (bloqueio de logits com $-\infty$ ou rotação forçada entre registros) causavam congestionamento sonoro audível — notas brigando pelo mesmo espaço temporal, perda de fluxo melódico, sensação de "metralhadora". A solução adotada foi um **reforço positivo dinâmico**: o sistema rastreia, para cada um dos três registros funcionais (solo 66-108, base 48-65, baixo 21-47), o número de tokens decorridos desde a última nota emitida nele. Quando esse contador ultrapassa 60 tokens (aproximadamente 4 segundos de música), os logits dos NOTE_ON correspondentes àquele registro recebem um bônus acumulativo proporcional ao tempo de silêncio. Trata-se de um "convite probabilístico" para que o instrumento ausente volte à composição, sem impor sua presença. A textura resultante é a de uma banda em que cada voz tem espaço próprio mas conversa com as outras.
+
+**Estágio 3 — Separação de vozes por registro.** Como o modelo opera no slot único INSTRUMENT_0, todas as notas geradas estão tecnicamente "no piano". O pipeline as separa em três tracks MIDI distintas conforme o registro de pitch, refletindo a divisão natural entre mão direita (melodia) e mão esquerda (acompanhamento e baixo) do pianista:
 
 | Voz | Faixa MIDI | Função |
 |-----|------------|--------|
@@ -155,16 +158,18 @@ A geração ocorre em quatro estágios complementares:
 | Base/Harmonia | 48–65 (C3–F4) | Acompanhamento harmônico |
 | Baixo | 21–47 (A0–B2) | Fundação tonal |
 
-**Estágio 3 — Fundação sintética (`--solid_base`).** Para garantir coerência harmônica e métrica, as vozes de baixo e base são substituídas por padrões algorítmicos derivados da tonalidade especificada:
+Cada track recebe filtros específicos de pós-processamento: monofonia (apenas uma nota ativa por vez no solo e no baixo), gap mínimo de 0,15s entre ataques no solo, quantização ao grid de 1/8 de tempo (snap rítmico) e cap de duração máxima de 1,2s para evitar sustains anômalos. A base permanece polifônica para preservar acordes.
 
-- Progressão I-V-vi-IV (maior) ou i-VI-iv-V (menor)
-- Walking bass: a cada compasso, quatro notas (tônica, terça, quinta, oitava) com velocity variável
-- Acordes com inversões rotativas (posição fundamental e primeira inversão alternadas a cada compasso)
-- Respiração: a cada quarto compasso, a base toca apenas no tempo 1 (efeito de cadência)
+**Estágio 4 — Fundação harmônica robusta (modo `--solid_base`).** Apesar das restrições aplicadas no Estágio 1, o modelo ainda apresenta variabilidade harmônica significativa em alguns cenários, particularmente em peças mais longas. Para aplicações que demandam coerência harmônica estrita — como demonstrações de protótipo ou avaliações cegas em estudos controlados — o pipeline oferece um modo opcional de hibridização (`--solid_base`) no qual os tracks de baixo e base do modelo são substituídos por uma fundação algorítmica determinística:
 
-A voz de solo permanece do modelo, com filtros aplicados: monofonia (cada NOTE_ON encerra a nota anterior), gap mínimo de 0,15s entre ataques, quantização ao grid de 1/8 de tempo e cap de duração máxima de 1,2s.
+- Progressão diatônica I-V-vi-IV (em modo maior) ou i-VI-iv-V (em modo menor, com V harmônico)
+- Walking bass com quatro notas por compasso (tônica → terça → quinta → tônica oitava acima), velocity contornada para sugerir groove
+- Acordes da base com inversões rotativas (posição fundamental e primeira inversão alternadas a cada compasso)
+- Respiração rítmica: o quarto compasso de cada ciclo executa apenas o tempo 1, criando sensação de cadência
 
-**Estágio 4 — Bateria algorítmica (`--add_drums`).** Um padrão rock/pop 4/4 determinístico é injetado no canal 9 GM: kick (36) nos tempos 1 e 3, snare (38) nos tempos 2 e 4, hi-hat fechado (42) em cada colcheia (oito por compasso), com hi-hat aberto (46) em transições a cada quatro compassos. Velocity tem variação aleatória ±5–8 para evitar som mecânico.
+É importante destacar que o modo `--solid_base` é uma escolha de engenharia, não a base do sistema. O pipeline funciona em modo *puro* (`--render_as_trio` sem `--solid_base`), com baixo e base provenientes integralmente do modelo guiado pelo Constrained Decoding. A análise comparativa entre os dois modos será objeto de trabalho futuro.
+
+**Estágio 5 — Bateria algorítmica (`--add_drums`).** Como o conjunto de dados Groove MIDI ainda não foi integrado a um modelo dedicado (ver Seção 6), o pipeline injeta opcionalmente um padrão rítmico determinístico na faixa de percussão (canal 9 GM): kick (36) nos tempos 1 e 3, snare (38) nos tempos 2 e 4, hi-hat fechado (42) em cada colcheia (oito por compasso) e hi-hat aberto (46) em transições a cada quatro compassos. A velocidade de cada hit tem variação aleatória ±5–8 unidades para evitar a sonoridade mecânica típica de baterias programadas. O padrão sincroniza-se automaticamente com o tempo da peça gerada pelo modelo, completando a textura de banda.
 
 ### 4.6. Ambiente de Execução
 

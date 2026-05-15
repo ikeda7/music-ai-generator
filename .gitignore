@@ -2,6 +2,8 @@
 TCC/datasets/
 TCC/checkpoints/
 TCC/samples/
+TCC/eval_samples/
+TCC/**/__pycache__/
 TCC/__pycache__/
 TCC/*.pkl
 TCC/*.pyc
@@ -14,14 +16,15 @@ TCC/.claude/
 # Templates e arquivos não originais
 PC1/anteprojeto/ModeloAnteprojeto-PC1.docx
 PC1/anteprojeto/template base.pptx
-TCC/Artigo-MarcoMello_revisadoDaniloEler.pdf
+TCC/article/Artigo-MarcoMello_revisadoDaniloEler.pdf
 
 # Áudios gerados (binários grandes)
 PC2/*.mp3
 PC2/*.mp4
 
-# Arquivos temporários
+# Arquivos temporários (locks do Word, swaps)
 *.tmp
 *.log
+~$*
 Thumbs.db
 .DS_Store
