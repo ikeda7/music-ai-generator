@@ -1,30 +1,81 @@
-# Datasets e modelos (muito grandes para o git)
+# ============================================================
+# Dados e modelos (grandes / não versionados)
+# ============================================================
 TCC/datasets/
 TCC/checkpoints/
 TCC/samples/
 TCC/eval_samples/
+TCC/*.pkl
+
+# ============================================================
+# Caches e temporários de Python
+# ============================================================
 TCC/**/__pycache__/
 TCC/__pycache__/
-TCC/*.pkl
 TCC/*.pyc
 TCC/debug_pipeline.py
 
-# Config local do Claude Code (pessoal)
-TCC/.claude/
+# ============================================================
+# Config local / pessoal (Claude Code)
+# ============================================================
 .claude/
+TCC/.claude/
 
-# Templates e arquivos não originais
+# ============================================================
+# Material PESSOAL de defesa — NÃO público
+# (roteiros, feedback do orientador, respostas com e-mails/PII,
+#  áudios demo, backups .docx/.pdf antigos)
+# ============================================================
+TCC/_defesa_local/
+
+# ============================================================
+# Artefatos de build do LaTeX (regeneráveis)
+# ============================================================
+*.aux
+*.bbl
+*.blg
+*.out
+*.toc
+*.nav
+*.snm
+*.synctex.gz
+*.fls
+*.fdb_latexmk
+*.log
+
+# ============================================================
+# Pastas de pré-visualização temporárias (edição)
+# ============================================================
+_sv/
+_pv/
+_cmp/
+
+# ============================================================
+# Templates e arquivos não originais (PC1)
+# ============================================================
 PC1/anteprojeto/ModeloAnteprojeto-PC1.docx
 PC1/anteprojeto/template base.pptx
-TCC/article/Artigo-MarcoMello_revisadoDaniloEler.pdf
 
-# Áudios gerados (binários grandes)
+# ============================================================
+# Áudios/vídeos gerados (binários grandes)
+# ============================================================
 PC2/*.mp3
 PC2/*.mp4
 
-# Arquivos temporários (locks do Word, swaps)
+# ============================================================
+# Materiais que NÃO vão ao repositório público (mantidos locais)
+# ============================================================
+# Artigos de referência de terceiros (direitos autorais)
+PC1/artigos/
+# Notas pessoais / autoavaliação do projeto
+notes.md
+# Instruções internas de desenvolvimento
+CLAUDE.md
+
+# ============================================================
+# Locks/swaps de sistema
+# ============================================================
 *.tmp
-*.log
 ~$*
 Thumbs.db
 .DS_Store

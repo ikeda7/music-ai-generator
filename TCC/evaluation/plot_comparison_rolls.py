@@ -108,8 +108,8 @@ def main():
 
     cols = min(args.cols, n)
     rows = (n + cols - 1) // cols
-    fig_w = 8 * cols
-    fig_h = 4 * rows
+    fig_w = 9 * cols
+    fig_h = 3.0 * rows
     fig, axes = plt.subplots(rows, cols, figsize=(fig_w, fig_h), squeeze=False)
 
     for idx, (path, label) in enumerate(zip(args.inputs, labels)):

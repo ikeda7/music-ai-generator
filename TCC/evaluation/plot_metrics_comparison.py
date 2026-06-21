@@ -57,7 +57,12 @@ def main():
     rows.sort(key=lambda r: (0 if r['model'] == 'transformer' else 1, r['sample']))
 
     n_metrics = len(METRIC_KEYS)
-    fig, axes = plt.subplots(1, n_metrics, figsize=(4.2 * n_metrics, 5))
+    # Layout 3x2: 2 painéis por linha => cada painel ocupa ~metade da largura
+    # da coluna do artigo, ficando bem maior/legível. O 6o painel fica oculto.
+    ncols = 2
+    nrows = 3
+    fig, axes = plt.subplots(nrows, ncols, figsize=(6.4 * ncols, 3.3 * nrows))
+    axes = axes.flatten()
 
     for idx, (key, title) in enumerate(METRIC_KEYS):
         ax = axes[idx]
@@ -76,8 +81,11 @@ def main():
         x = np.arange(len(values))
         ax.bar(x, values, color=colors, edgecolor='black', linewidth=0.6)
         ax.set_xticks(x)
-        ax.set_xticklabels(labels, fontsize=9)
-        ax.set_title(title, fontsize=11)
+        ax.set_xticklabels(labels, fontsize=12)
+        ax.tick_params(axis='y', labelsize=11)
+        ax.set_xlabel('Amostra', fontsize=12)
+        ax.set_ylabel('Valor da métrica', fontsize=12)
+        ax.set_title(title, fontsize=14)
         ax.grid(True, alpha=0.3, axis='y', linestyle='--')
 
         # Linha de média por modelo
@@ -90,6 +98,10 @@ def main():
             ax.axhline(y=np.mean(m_vals), color=COLOR_MARKOV,
                        linestyle=':', linewidth=1.2, alpha=0.7)
 
+    # Oculta painéis extras não utilizados (5 métricas em grade 2x3)
+    for extra in range(n_metrics, len(axes)):
+        axes[extra].axis('off')
+
     # Legenda compartilhada no topo
     from matplotlib.patches import Patch
     handles = [
@@ -97,12 +109,12 @@ def main():
         Patch(facecolor=COLOR_MARKOV, edgecolor='black', label='Markov'),
     ]
     fig.legend(handles=handles, loc='upper center', ncol=2,
-               fontsize=11, frameon=False, bbox_to_anchor=(0.5, 1.02))
+               fontsize=13, frameon=False, bbox_to_anchor=(0.5, 1.0))
 
     fig.suptitle('Métricas Quantitativas por Amostra — Transformer vs Markov',
-                 fontsize=13, y=1.05)
+                 fontsize=15, y=1.03)
     plt.tight_layout()
-    plt.savefig(args.output, dpi=140, bbox_inches='tight')
+    plt.savefig(args.output, dpi=160, bbox_inches='tight')
     plt.close()
     print(f"Figura salva em: {args.output}")
 

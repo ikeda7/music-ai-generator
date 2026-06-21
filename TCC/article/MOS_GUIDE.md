@@ -5,8 +5,8 @@ Pipeline pra coletar avaliação cega comparativa Transformer vs Markov baseline
 ## Etapa 1 — Gerar o conjunto de avaliação
 
 ```bash
-cd "h:/Meu Drive/TCC/TCC"
-python make_eval_set.py --output_dir ./eval_samples
+cd "g:/Meu Drive/TCC/TCC"
+python evaluation/make_eval_set.py --output_dir ./eval_samples
 ```
 
 Produz `eval_samples/sample_A.mid` até `sample_H.mid` (ordem randomizada) e um `legend.json` confidencial mapeando código → modelo. **Não compartilhar a legenda com avaliadores.**
@@ -34,7 +34,7 @@ Usar `midi2audio` (pip install midi2audio) que envolve fluidsynth.
 ## Etapa 3 — Calcular métricas quantitativas
 
 ```bash
-python metrics.py --input ./eval_samples --output ./eval_samples/metricas.csv
+python evaluation/metrics.py --input ./eval_samples --output ./eval_samples/metricas.csv
 ```
 
 CSV resultante vai pra dissertação (tabela comparativa Transformer vs Markov).
@@ -85,11 +85,15 @@ Quando tiver as respostas:
 # Forms → Respostas → Download CSV
 # Salvar como eval_samples/respostas.csv
 
-python analyze_mos.py --responses eval_samples/respostas.csv \
-                     --legend eval_samples/legend.json
+python evaluation/analyze_mos.py --responses eval_samples/respostas.csv \
+                     --legend eval_samples/legend.json \
+                     --output eval_samples/resultado_mos.csv
 ```
 
-*(script `analyze_mos.py` ainda a fazer — calcula média por critério por modelo, teste t pra significância)*
+O `analyze_mos.py` calcula média por critério por modelo e roda teste-t de Welch
+(p exato via scipy quando disponível). **Importante:** as perguntas do Forms devem
+seguir o padrão `Amostra X — Critério` (ver `FORMS_PRONTO.md`), senão o script não
+casa as colunas.
 
 ## Critério de sucesso do TCC
 
