@@ -1,35 +1,22 @@
 # ============================================================
-# Dados e modelos (grandes / não versionados)
+# Dados, modelos e checkpoints (arquivos grandes)
 # ============================================================
 TCC/datasets/
 TCC/checkpoints/
 TCC/samples/
 TCC/eval_samples/
-TCC/*.pkl
+*.pt
+*.pth
+*.pkl
 
 # ============================================================
-# Caches e temporários de Python
+# Caches do Python
 # ============================================================
-TCC/**/__pycache__/
-TCC/__pycache__/
-TCC/*.pyc
-TCC/debug_pipeline.py
+**/__pycache__/
+*.pyc
 
 # ============================================================
-# Config local / pessoal (Claude Code)
-# ============================================================
-.claude/
-TCC/.claude/
-
-# ============================================================
-# Material PESSOAL de defesa — NÃO público
-# (roteiros, feedback do orientador, respostas com e-mails/PII,
-#  áudios demo, backups .docx/.pdf antigos)
-# ============================================================
-TCC/_defesa_local/
-
-# ============================================================
-# Artefatos de build do LaTeX (regeneráveis)
+# Artefatos de compilação do LaTeX (regeneráveis)
 # ============================================================
 *.aux
 *.bbl
@@ -44,39 +31,15 @@ TCC/_defesa_local/
 *.log
 
 # ============================================================
-# Pastas de pré-visualização temporárias (edição)
+# Mídia gerada e templates auxiliares
 # ============================================================
-_sv/
-_pv/
-_cmp/
-
-# ============================================================
-# Templates e arquivos não originais (PC1)
-# ============================================================
+PC2/*.mp3
+PC2/*.mp4
 PC1/anteprojeto/ModeloAnteprojeto-PC1.docx
 PC1/anteprojeto/template base.pptx
 
 # ============================================================
-# Áudios/vídeos gerados (binários grandes)
-# ============================================================
-PC2/*.mp3
-PC2/*.mp4
-
-# ============================================================
-# Materiais que NÃO vão ao repositório público (mantidos locais)
-# ============================================================
-# Artigos de referência de terceiros (direitos autorais)
-PC1/artigos/
-# Notas pessoais / autoavaliação do projeto
-notes.md
-# Instruções internas de desenvolvimento
-CLAUDE.md
-# Notas e roteiros pessoais do PC1
-PC1/pc1.txt
-PC1/anteprojeto/roteiro apresentação.txt
-
-# ============================================================
-# Locks/swaps de sistema
+# Arquivos de sistema
 # ============================================================
 *.tmp
 ~$*

@@ -50,7 +50,7 @@ A análise do piano roll de `teste_ep109.png` mostrou duas linhas horizontais pa
 
 ### Decisão tática: rollback para ep74
 
-Os checkpoints 89, 94, 99, 104 e 109 foram descartados (deletados do disco). A decisão foi documentada em `CLAUDE.md`: **congelar ep74 como produto final do TCC**, evitando treinamento além do ponto de retorno positivo. Recursos passaram a ser dedicados a refinar a geração (constraints, render) e às pendências acadêmicas (avaliação MOS, baseline Markov, dissertação).
+Os checkpoints 89, 94, 99, 104 e 109 foram descartados (deletados do disco). A decisão foi documentada nas notas do projeto: **congelar ep74 como produto final do TCC**, evitando treinamento além do ponto de retorno positivo. Recursos passaram a ser dedicados a refinar a geração (constraints, render) e às pendências acadêmicas (avaliação MOS, baseline Markov, dissertação).
 
 ## Evolução das constraints de geração
 
